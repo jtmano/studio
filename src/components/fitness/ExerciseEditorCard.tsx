@@ -71,15 +71,7 @@ export function ExerciseDetailCard({
         />
       </CardHeader>
       <CardContent className="p-4 space-y-3">
-        {exercise.sets.length > 0 && (
-          <div className="grid grid-cols-[auto_1fr_1fr_1fr_auto] items-center gap-3 px-3 mb-1 text-xs text-muted-foreground font-medium">
-            <div className="w-12">Set</div>
-            <div>Weight</div>
-            <div>Reps</div>
-            <div>Notes</div>
-            <div className="text-right">Log</div>
-          </div>
-        )}
+        {/* Header row for Weight, Reps, Log has been removed to match the new UI */}
         {exercise.sets.map((set, setIndex) => (
           <SetRow
             key={set.id}

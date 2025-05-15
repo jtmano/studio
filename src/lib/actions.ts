@@ -1,12 +1,12 @@
 
 // @ts-nocheck
 "use server";
-import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutExercise, IndividualSet, LoggedSetInfo, Exercise as AISuggestionExerciseType } from "@/types/fitness";
+import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutExercise, IndividualSet, LoggedSetInfo, Exercise as AISuggestionExerciseType, SerializableAppState } from "@/types/fitness";
 import { suggestExercise as performAiExerciseSuggestion } from "@/ai/flows/suggest-exercise";
 import type { SuggestExerciseInput, SuggestExerciseOutput } from "@/ai/flows/suggest-exercise";
 import { supabase } from "./supabaseClient";
 
-// Mock database for history (saving routine will need update if it uses mockTemplates)
+// Mock database for history
 let mockWorkoutHistory: WorkoutHistoryItem[] = [];
 let nextHistoryId = 1;
 
@@ -16,7 +16,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
   const { data: templateRows, error } = await supabase
     .from('Templates')
-    .select('Exercise, Tool') // Assuming these are columns for exercise name and tool
+    .select('Exercise, Tool') 
     .eq('Day', dayIdentifier);
 
   if (error) {
@@ -38,7 +38,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
     if (!exercisesMap.has(exerciseKey)) {
       exercisesMap.set(exerciseKey, {
-        id: crypto.randomUUID(), // Unique ID for this exercise type in the workout
+        id: crypto.randomUUID(), 
         name: exerciseName,
         tool: toolName,
         sets: [],
@@ -47,21 +47,20 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
     const currentExercise = exercisesMap.get(exerciseKey)!;
     currentExercise.sets.push({
-      id: crypto.randomUUID(), // Unique ID for this specific set
+      id: crypto.randomUUID(), 
       setNumber: currentExercise.sets.length + 1,
-      // Target weight/reps from template are not in DB schema, so user fills them
-      // Or, if your DB has target_weight, target_reps, use row.target_weight, row.target_reps
-      targetWeight: "", // Default or from row if available
-      targetReps: undefined, // Default or from row if available
-      loggedWeight: "", // Initially empty, user fills this
-      loggedReps: "",   // Initially empty, user fills this
+      targetWeight: "", 
+      targetReps: undefined, 
+      loggedWeight: "", 
+      loggedReps: "",   
       isCompleted: false,
+      notes: "", 
     });
   });
 
   return {
     id: `supabase-day-${dayIdentifier}-${crypto.randomUUID()}`,
-    name: `Day ${dayIdentifier} Workout`, // You might want a 'TemplateName' column in Supabase
+    name: `Day ${dayIdentifier} Workout`, 
     dayIdentifier: dayIdentifier,
     exercises: Array.from(exercisesMap.values()),
   };
@@ -69,7 +68,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
 export async function logWorkout(week: number, day: number, currentWorkoutExercises: WorkoutExercise[]): Promise<WorkoutHistoryItem> {
   console.log(`Logging workout for Week ${week}, Day ${day}`);
-  await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 500)); 
 
   const loggedSets: LoggedSetInfo[] = [];
   currentWorkoutExercises.forEach(exercise => {
@@ -79,8 +78,8 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
           exerciseName: exercise.name,
           tool: exercise.tool,
           setNumber: set.setNumber,
-          weight: set.loggedWeight, // Log the values entered by the user
-          reps: set.loggedReps,     // Log the values entered by the user
+          weight: set.loggedWeight, 
+          reps: set.loggedReps,     
           notes: set.notes,
         });
       }
@@ -88,9 +87,6 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
   });
 
   if (loggedSets.length === 0) {
-    // Or handle as you see fit, maybe log an empty workout or prevent it
-    console.log("No sets were completed. Not logging an empty workout history item.");
-    // Depending on desired behavior, you might throw an error or return a specific status
     throw new Error("No sets were marked as completed. Workout not logged.");
   }
 
@@ -99,7 +95,6 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
     date: new Date().toISOString(),
     week,
     day,
-    // workoutName: "Dynamic Workout", // Consider how to get this if needed
     loggedSets,
   };
   mockWorkoutHistory.unshift(newEntry);
@@ -114,43 +109,47 @@ export async function getWorkoutHistory(): Promise<WorkoutHistoryItem[]> {
   return JSON.parse(JSON.stringify(mockWorkoutHistory));
 }
 
-export async function saveRoutine(name: string, dayIdentifier: number, exercisesToSave: WorkoutExercise[]): Promise<WorkoutTemplate> {
-  console.log(`Saving routine: ${name} for day identifier ${dayIdentifier}`);
-  // This function needs to be adapted if you want to save to Supabase.
-  // The current implementation is mock and may not align perfectly with new types if it used old mockTemplates.
-  // For now, it constructs a new template based on the WorkoutExercise[] structure.
-  await new Promise(resolve => setTimeout(resolve, 500));
+// Function to save the current app state to Supabase
+export async function saveCurrentAppState(appState: SerializableAppState): Promise<void> {
+  console.log("Saving current app state to Supabase with ID 1:", appState);
+  await new Promise(resolve => setTimeout(resolve, 300)); 
 
-  // Ensure exercisesToSave are deep copied and IDs are fresh if necessary
-  const processedExercises = exercisesToSave.map(ex => ({
-    ...ex,
-    id: crypto.randomUUID(), // New ID for the exercise in this template
-    sets: ex.sets.map(s => ({
-      ...s,
-      id: crypto.randomUUID(), // New ID for the set in this template
-      // When saving as a template, loggedWeight/loggedReps become targetWeight/targetReps
-      targetWeight: s.loggedWeight,
-      targetReps: s.loggedReps ? Number(s.loggedReps) : undefined,
-      loggedWeight: "", // Clear logged values for template
-      loggedReps: "",
-      isCompleted: false, // Reset completion status for template
-    })),
-  }));
+  const { data, error } = await supabase
+    .from('Current State') 
+    .upsert({ id: 1, state_data: appState, updated_at: new Date().toISOString() }) 
+    .select(); 
 
-  const newTemplate: WorkoutTemplate = {
-    id: `tpl-dynamic-${crypto.randomUUID()}`,
-    name,
-    dayIdentifier,
-    exercises: processedExercises,
-  };
-  // mockTemplates.push(newTemplate); // This was for the old mock system.
-  console.log("Routine saved (conceptually):", newTemplate);
-  // Here you would implement Supabase insert logic for the template and its exercises/sets.
-  // This might involve inserting into multiple tables if your Supabase schema is normalized.
-  // For now, we return the created template object.
-  return newTemplate;
+  if (error) {
+    console.error("Error saving app state to Supabase:", error);
+    throw new Error(`Failed to save app state: ${error.message}`);
+  }
+  console.log("App state saved successfully to Supabase:", data);
 }
 
+// Function to load the current app state from Supabase
+export async function loadCurrentAppState(): Promise<SerializableAppState | null> {
+  console.log("Loading current app state from Supabase with ID 1");
+  await new Promise(resolve => setTimeout(resolve, 300)); 
+
+  const { data, error } = await supabase
+    .from('Current State') 
+    .select('state_data')
+    .eq('id', 1)
+    .maybeSingle(); 
+
+  if (error) {
+    console.error("Error loading app state from Supabase:", error);
+    return null; 
+  }
+
+  if (data && data.state_data) {
+    console.log("App state loaded successfully from Supabase:", data.state_data);
+    return data.state_data as SerializableAppState; 
+  } else {
+    console.log("No saved app state found in Supabase.");
+    return null;
+  }
+}
 
 export async function suggestExercise(input: SuggestExerciseInput): Promise<SuggestExerciseOutput> {
   console.log("Requesting AI exercise suggestion with input:", input);

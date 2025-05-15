@@ -2,37 +2,41 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from 'react';
-import type { WorkoutExercise, IndividualSet } from "@/types/fitness"; // Updated types
-import { ExerciseDetailCard } from "./ExerciseEditorCard"; // Renamed to ExerciseDetailCard, or ensure this is the new component
+import type { WorkoutExercise, IndividualSet } from "@/types/fitness";
+import { ExerciseDetailCard } from "./ExerciseEditorCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PlusCircle, Save, RotateCcw, Send } from 'lucide-react';
+import { PlusCircle, Save, RotateCcw, Send, DownloadCloud } from 'lucide-react'; // Added DownloadCloud
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 
 
 interface WorkoutLoggerProps {
-  currentWorkout: WorkoutExercise[]; // Changed from currentExercises
-  setCurrentWorkout: Dispatch<SetStateAction<WorkoutExercise[]>>; // Changed
+  currentWorkout: WorkoutExercise[];
+  setCurrentWorkout: Dispatch<SetStateAction<WorkoutExercise[]>>;
   onLogWorkout: () => Promise<void>;
-  onSaveRoutine: (routineName: string) => Promise<void>; // Signature might change if routine saving needs day
+  onSaveCurrentState: () => Promise<void>; // Changed from onSaveRoutine
+  onLoadCurrentState: () => Promise<void>;
   onResetTemplate: () => void;
   isLoading: boolean;
   isLogging: boolean;
-  isSavingRoutine: boolean;
+  isSavingState: boolean; // Changed from isSavingRoutine
+  isLoadingState: boolean;
   templateName?: string;
-  selectedDay: number; // Added to pass to RoutineControls if it's used here
+  selectedDay: number;
 }
 
 export function WorkoutLogger({
   currentWorkout,
   setCurrentWorkout,
   onLogWorkout,
-  onSaveRoutine, // This now receives only name, page.tsx will handle day
+  onSaveCurrentState, // Changed
+  onLoadCurrentState,
   onResetTemplate,
   isLoading,
   isLogging,
-  isSavingRoutine,
+  isSavingState, // Changed
+  isLoadingState,
   templateName,
   selectedDay
 }: WorkoutLoggerProps) {
@@ -41,7 +45,7 @@ export function WorkoutLogger({
   const handleExerciseDetailChange = (exerciseIndex: number, field: keyof WorkoutExercise, value: string | number) => {
     const updatedWorkout = [...currentWorkout];
     const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
-    (exerciseToUpdate[field] as any) = value; // Type assertion needed for dynamic field
+    (exerciseToUpdate[field] as any) = value; 
     updatedWorkout[exerciseIndex] = exerciseToUpdate;
     setCurrentWorkout(updatedWorkout);
   };
@@ -51,7 +55,7 @@ export function WorkoutLogger({
     const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
     const sets = [...exerciseToUpdate.sets];
     const setToUpdate = { ...sets[setIndex] };
-    (setToUpdate[field] as any) = value; // Type assertion
+    (setToUpdate[field] as any) = value; 
     sets[setIndex] = setToUpdate;
     exerciseToUpdate.sets = sets;
     updatedWorkout[exerciseIndex] = exerciseToUpdate;
@@ -68,6 +72,7 @@ export function WorkoutLogger({
         setNumber: 1,
         loggedWeight: "",
         loggedReps: "",
+        notes: "",
         isCompleted: false,
       }],
     };
@@ -81,7 +86,7 @@ export function WorkoutLogger({
     }
     const updatedWorkout = currentWorkout.filter((_, i) => i !== exerciseIndex);
     setCurrentWorkout(updatedWorkout);
-     if (updatedWorkout.length === 0) { // If all exercises are removed, add a default one
+     if (updatedWorkout.length === 0) { 
         handleAddExercise();
     }
   };
@@ -95,8 +100,9 @@ export function WorkoutLogger({
       {
         id: crypto.randomUUID(),
         setNumber: newSetNumber,
-        loggedWeight: "", // Default to last set's weight or empty
-        loggedReps: "",   // Default to last set's reps or empty
+        loggedWeight: "", 
+        loggedReps: "",  
+        notes: "",
         isCompleted: false,
       },
     ];
@@ -109,19 +115,16 @@ export function WorkoutLogger({
     const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
     
     if (exerciseToUpdate.sets.length <= 1) {
-      // If it's the last set of the only exercise, don't remove it.
-      // Or, remove the exercise itself if it becomes empty.
       if (currentWorkout.length === 1) {
          toast({ title: "Cannot Remove", description: "At least one set must remain in the workout.", variant: "default" });
         return;
       }
-      // If this exercise has only one set, but there are other exercises, remove this exercise.
       handleRemoveExercise(exerciseIndex);
       return;
     }
 
     exerciseToUpdate.sets = exerciseToUpdate.sets.filter((_, i) => i !== setIndex)
-      .map((s, idx) => ({ ...s, setNumber: idx + 1 })); // Re-number sets
+      .map((s, idx) => ({ ...s, setNumber: idx + 1 })); 
     
     updatedWorkout[exerciseIndex] = exerciseToUpdate;
     setCurrentWorkout(updatedWorkout);
@@ -154,7 +157,7 @@ export function WorkoutLogger({
             {templateName ? `Current Workout: ${templateName}` : "Log Your Workout"}
           </CardTitle>
           <div className="flex gap-2">
-             <Button onClick={onResetTemplate} variant="outline" size="sm" disabled={isLoading || isLogging || isSavingRoutine}>
+             <Button onClick={onResetTemplate} variant="outline" size="sm" disabled={isLoading || isLogging || isSavingState || isLoadingState}>
               <RotateCcw className="mr-2 h-4 w-4" /> Reset to Template
             </Button>
           </div>
@@ -180,17 +183,20 @@ export function WorkoutLogger({
             />
           ))
         )}
-        <div className="mt-6 flex flex-col sm:flex-row justify-between gap-3">
-          <Button onClick={handleAddExercise} variant="outline" disabled={isLogging || isSavingRoutine}>
+        <div className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-3">
+          <Button onClick={handleAddExercise} variant="outline" disabled={isLogging || isSavingState || isLoadingState}>
             <PlusCircle className="mr-2 h-4 w-4" /> Add Exercise Type
           </Button>
           <div className="flex flex-col sm:flex-row gap-3">
-             <Button onClick={() => onSaveRoutine(templateName || `Custom Routine Day ${selectedDay}`)} disabled={isLogging || isSavingRoutine || currentWorkout.length === 0}>
-                {isSavingRoutine ? "Saving..." : <><Save className="mr-2 h-4 w-4" /> Save as Routine</>}
+            <Button onClick={onLoadCurrentState} variant="outline" disabled={isLoading || isLogging || isSavingState || isLoadingState}>
+              {isLoadingState ? "Loading State..." : <><DownloadCloud className="mr-2 h-4 w-4" /> Load State</>}
+            </Button>
+            <Button onClick={onSaveCurrentState} disabled={isLogging || isSavingState || isLoadingState || currentWorkout.length === 0}>
+                {isSavingState ? "Saving..." : <><Save className="mr-2 h-4 w-4" /> Save</>}
             </Button>
             <Button 
               onClick={onLogWorkout} 
-              disabled={isLogging || isSavingRoutine || currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.every(s => !s.isCompleted))}
+              disabled={isLogging || isSavingState || isLoadingState || currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.every(s => !s.isCompleted))}
             >
               {isLogging ? "Logging..." : <><Send className="mr-2 h-4 w-4" /> Log Workout</>}
             </Button>

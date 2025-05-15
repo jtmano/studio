@@ -23,7 +23,7 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false); 
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
@@ -47,7 +47,7 @@ export default function FitnessFocusPage() {
     setIsLoadingTemplate(true);
     try {
       const template = await loadWorkoutTemplate(day);
-      const defaultWorkout = getDefaultExercise(); // Define defaultWorkout here to use in catch too
+      const defaultWorkout = getDefaultExercise();
       if (template && template.exercises.length > 0) {
         const processedExercises = template.exercises.map(ex => ({
           ...ex,
@@ -66,7 +66,7 @@ export default function FitnessFocusPage() {
       }
     } catch (error) {
       console.error("Failed to load template:", error);
-      const defaultWorkout = getDefaultExercise(); // Ensure defaultWorkout is available in catch
+      const defaultWorkout = getDefaultExercise();
       toast({ title: "Error Loading Template", description: "Could not load workout template.", variant: "destructive" });
       setCurrentWorkout(defaultWorkout);
       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
@@ -77,8 +77,15 @@ export default function FitnessFocusPage() {
   }, [toast, justLoadedState, setJustLoadedState, setIsLoadingTemplate, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
 
   useEffect(() => {
+    // If we are in the process of loading state, don't fetch a template.
+    // The loaded state will provide the currentWorkout.
+    // The justLoadedState flag (handled within fetchTemplate) will prevent
+    // an immediate template fetch after state loading completes.
+    if (isLoadingState) {
+      return;
+    }
     fetchTemplate(selectedDay);
-  }, [selectedDay, fetchTemplate]);
+  }, [selectedDay, fetchTemplate, isLoadingState]); // Added isLoadingState
 
 
   const fetchHistory = useCallback(async () => {
@@ -164,7 +171,8 @@ export default function FitnessFocusPage() {
       const loadedState = await loadCurrentAppState();
       if (loadedState) {
         setSelectedWeek(loadedState.selectedWeek);
-        setSelectedDay(loadedState.selectedDay);
+        setSelectedDay(loadedState.selectedDay); // This will trigger fetchTemplate's useEffect
+                                                 // but it will be guarded by isLoadingState.
         setCurrentWorkout(loadedState.currentWorkout.map(ex => ({
           ...ex,
           sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
@@ -174,7 +182,7 @@ export default function FitnessFocusPage() {
           ...ex,
           sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
         })));
-        setJustLoadedState(true); 
+        setJustLoadedState(true); // Set this so the *next* fetchTemplate call (after isLoadingState is false) is skipped.
         toast({ title: "State Loaded", description: "Your previous state has been restored." });
       } else {
         toast({ title: "No Saved State", description: "No previously saved state found.", variant: "default" });
@@ -238,3 +246,4 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
+

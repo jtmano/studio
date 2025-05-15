@@ -22,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark"> {/* Added "dark" class here */}
       {/*
         Applying GeistSans.variable to the body (or html) tag makes the CSS variable
         --font-geist-sans available. The globals.css file already sets the font-family

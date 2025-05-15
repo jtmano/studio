@@ -23,7 +23,7 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false);
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false); // Initialize to false
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
@@ -39,20 +39,18 @@ export default function FitnessFocusPage() {
     sets: [{
         id: crypto.randomUUID(),
         setNumber: 1,
-        targetWeight: "",
+        targetWeight: "", // Ensure all fields from IndividualSet are present
         targetReps: undefined,
         loggedWeight: "",
         loggedReps: "",
-        notes: "",
+        notes: "",       // Initialize notes
         isCompleted: false
     }],
   }];
 
   const fetchTemplate = useCallback(async (day: number) => {
-    if (justLoadedState) {
-      setJustLoadedState(false); 
-      return;
-    }
+    // The check `if (justLoadedState)` is now primarily handled by the useEffect that calls fetchTemplate.
+    // This function will only be called if justLoadedState is false.
     setIsLoadingTemplate(true);
     try {
       const template = await loadWorkoutTemplate(day);
@@ -62,24 +60,24 @@ export default function FitnessFocusPage() {
           ...ex,
           id: ex.id || crypto.randomUUID(),
           sets: ex.sets.map((s: IndividualSet) => ({
+            ...s,
             id: s.id || crypto.randomUUID(),
-            setNumber: s.setNumber,
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
             loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && s.loggedReps !== '') ? Number(s.loggedReps) : 
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
                         (s.loggedReps === '') ? "" : "",
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
         }));
         setCurrentWorkout(processedExercises);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises)));
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises))); // Deep clone for reset
         setLoadedTemplateName(template.name);
         toast({ title: "Template Loaded", description: `${template.name} for Day ${day} loaded.` });
       } else {
         setCurrentWorkout(defaultWorkout);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
         setLoadedTemplateName(undefined);
       }
     } catch (error) {
@@ -87,20 +85,20 @@ export default function FitnessFocusPage() {
       const defaultWorkout = getDefaultExercise();
       toast({ title: "Error Loading Template", description: "Could not load workout template.", variant: "destructive" });
       setCurrentWorkout(defaultWorkout);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
       setLoadedTemplateName(undefined);
     } finally {
       setIsLoadingTemplate(false);
     }
-  }, [toast, justLoadedState, setJustLoadedState, setIsLoadingTemplate, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
+  }, [toast, setIsLoadingTemplate, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
 
 
   useEffect(() => {
-    if (isLoadingState) { 
+    if (isLoadingState || justLoadedState) { // If loading state OR if state was just loaded, don't fetch template.
       return;
     }
     fetchTemplate(selectedDay);
-  }, [selectedDay, fetchTemplate, isLoadingState]);
+  }, [selectedDay, fetchTemplate, isLoadingState, justLoadedState]); // Added isLoadingState and justLoadedState
 
 
   const fetchHistory = useCallback(async () => {
@@ -122,12 +120,12 @@ export default function FitnessFocusPage() {
   
   const handleResetToTemplate = () => {
     if (initialTemplateWorkout.length > 0) {
-      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout)));
+      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout))); // Deep clone for reset
       toast({ title: "Workout Reset", description: "Exercises reset to the loaded template." });
     } else {
        const defaultWorkout = getDefaultExercise();
        setCurrentWorkout(defaultWorkout);
-       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
        toast({ title: "Workout Reset", description: "Reset to a blank slate." });
     }
   };
@@ -156,30 +154,35 @@ export default function FitnessFocusPage() {
 
   const handleSaveCurrentState = async () => {
     setIsSavingState(true);
+    // Deep clone and ensure notes are empty strings if null/undefined
+    const currentWorkoutToSave = JSON.parse(JSON.stringify(currentWorkout.map(ex => ({
+      ...ex,
+      sets: ex.sets.map(s => ({
+        ...s,
+        notes: s.notes || "",
+        loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+        loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
+                    (s.loggedReps === '') ? "" : "",
+      }))
+    }))));
+
+    const initialTemplateWorkoutToSave = JSON.parse(JSON.stringify(initialTemplateWorkout.map(ex => ({
+      ...ex,
+      sets: ex.sets.map(s => ({
+        ...s,
+        notes: s.notes || "",
+        loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+        loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
+                    (s.loggedReps === '') ? "" : "",
+      }))
+    }))));
+
     const appState: SerializableAppState = {
       selectedWeek,
       selectedDay,
-      currentWorkout: JSON.parse(JSON.stringify(currentWorkout.map(ex => ({ 
-        ...ex,
-        sets: ex.sets.map(s => ({
-            ...s, 
-            notes: s.notes || "",
-            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && s.loggedReps !== '') ? Number(s.loggedReps) : 
-                        (s.loggedReps === '') ? "" : "",
-        }))
-      })))),
+      currentWorkout: currentWorkoutToSave,
       loadedTemplateName,
-      initialTemplateWorkout: JSON.parse(JSON.stringify(initialTemplateWorkout.map(ex => ({ 
-        ...ex,
-        sets: ex.sets.map(s => ({
-            ...s, 
-            notes: s.notes || "",
-            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && s.loggedReps !== '') ? Number(s.loggedReps) : 
-                        (s.loggedReps === '') ? "" : "",
-        }))
-      })))),
+      initialTemplateWorkout: initialTemplateWorkoutToSave,
     };
     try {
       await saveCurrentAppState(appState);
@@ -194,14 +197,16 @@ export default function FitnessFocusPage() {
 
   const handleLoadCurrentState = async () => {
     setIsLoadingState(true);
+    setJustLoadedState(true); // Set flag before async operation and state changes
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState) {
         setSelectedWeek(loadedState.selectedWeek);
-        setSelectedDay(loadedState.selectedDay);
+        setSelectedDay(loadedState.selectedDay); // This will trigger useEffect for fetchTemplate, which should now bail out
 
-        const clonedCurrentWorkout = JSON.parse(JSON.stringify(loadedState.currentWorkout));
-        const clonedInitialTemplateWorkout = JSON.parse(JSON.stringify(loadedState.initialTemplateWorkout));
+        // Deep clone and process the loaded workouts
+        const clonedCurrentWorkout = JSON.parse(JSON.stringify(loadedState.currentWorkout || []));
+        const clonedInitialTemplateWorkout = JSON.parse(JSON.stringify(loadedState.initialTemplateWorkout || []));
 
         const processedCurrentWorkout = clonedCurrentWorkout.map((ex: WorkoutExercise) => ({
           ...ex,
@@ -212,7 +217,8 @@ export default function FitnessFocusPage() {
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
             loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
+                        (s.loggedReps === '') ? "" : "",
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
@@ -227,25 +233,33 @@ export default function FitnessFocusPage() {
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
             loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
+                        (s.loggedReps === '') ? "" : "",
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
         }));
-
+        
         setCurrentWorkout(processedCurrentWorkout);
         setLoadedTemplateName(loadedState.loadedTemplateName);
         setInitialTemplateWorkout(processedInitialTemplateWorkout);
-        setJustLoadedState(true);
+        
         toast({ title: "State Loaded", description: "Your previous state has been restored." });
       } else {
         toast({ title: "No Saved State", description: "No previously saved state found.", variant: "default" });
+        setJustLoadedState(false); // Reset if no state was loaded
       }
     } catch (error) {
       console.error("Failed to load app state:", error);
       toast({ title: "Load State Failed", description: "Could not load your saved state.", variant: "destructive" });
+      setJustLoadedState(false); // Reset on error
     } finally {
       setIsLoadingState(false);
+      // Reset justLoadedState after a short delay to allow UI to settle and prevent immediate template fetch
+      // if selectedDay hasn't changed from what was loaded.
+      // Or, more robustly, let the useEffect for fetchTemplate handle it on the next actual day change.
+      // For now, we'll set it to false, allowing the next interaction or day change to fetch templates.
+      setTimeout(() => setJustLoadedState(false), 0);
     }
   };
 

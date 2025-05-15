@@ -5,6 +5,7 @@ export interface Exercise {
   reps?: number;
   weight?: number | string; // string to allow "bodyweight" or ranges like "5-10kg"
   targetMuscleGroup?: string; // For AI suggestion context
+  tool?: string; // To store equipment like "Barbell", "Body Weight"
 }
 
 export interface WorkoutLogEntry extends Exercise {

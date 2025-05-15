@@ -1,59 +1,132 @@
+
 "use client";
 
 import type { Dispatch, SetStateAction } from 'react';
-import type { Exercise, WorkoutLogEntry } from "@/types/fitness";
-import { ExerciseEditorCard } from "./ExerciseEditorCard";
+import type { WorkoutExercise, IndividualSet } from "@/types/fitness"; // Updated types
+import { ExerciseDetailCard } from "./ExerciseEditorCard"; // Renamed to ExerciseDetailCard, or ensure this is the new component
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlusCircle, Save, RotateCcw, Send } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/hooks/use-toast';
+
 
 interface WorkoutLoggerProps {
-  currentExercises: Exercise[];
-  setCurrentExercises: Dispatch<SetStateAction<Exercise[]>>;
+  currentWorkout: WorkoutExercise[]; // Changed from currentExercises
+  setCurrentWorkout: Dispatch<SetStateAction<WorkoutExercise[]>>; // Changed
   onLogWorkout: () => Promise<void>;
-  onSaveRoutine: () => Promise<void>;
+  onSaveRoutine: (routineName: string) => Promise<void>; // Signature might change if routine saving needs day
   onResetTemplate: () => void;
   isLoading: boolean;
   isLogging: boolean;
   isSavingRoutine: boolean;
   templateName?: string;
+  selectedDay: number; // Added to pass to RoutineControls if it's used here
 }
 
 export function WorkoutLogger({
-  currentExercises,
-  setCurrentExercises,
+  currentWorkout,
+  setCurrentWorkout,
   onLogWorkout,
-  onSaveRoutine,
+  onSaveRoutine, // This now receives only name, page.tsx will handle day
   onResetTemplate,
   isLoading,
   isLogging,
   isSavingRoutine,
   templateName,
+  selectedDay
 }: WorkoutLoggerProps) {
+  const { toast } = useToast();
 
-  const handleExerciseChange = (index: number, field: keyof Exercise, value: string | number) => {
-    const updatedExercises = [...currentExercises];
-    updatedExercises[index] = { ...updatedExercises[index], [field]: value };
-    setCurrentExercises(updatedExercises);
+  const handleExerciseDetailChange = (exerciseIndex: number, field: keyof WorkoutExercise, value: string | number) => {
+    const updatedWorkout = [...currentWorkout];
+    const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
+    (exerciseToUpdate[field] as any) = value; // Type assertion needed for dynamic field
+    updatedWorkout[exerciseIndex] = exerciseToUpdate;
+    setCurrentWorkout(updatedWorkout);
+  };
+
+  const handleSetChange = (exerciseIndex: number, setIndex: number, field: keyof IndividualSet, value: string | number | boolean) => {
+    const updatedWorkout = [...currentWorkout];
+    const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
+    const sets = [...exerciseToUpdate.sets];
+    const setToUpdate = { ...sets[setIndex] };
+    (setToUpdate[field] as any) = value; // Type assertion
+    sets[setIndex] = setToUpdate;
+    exerciseToUpdate.sets = sets;
+    updatedWorkout[exerciseIndex] = exerciseToUpdate;
+    setCurrentWorkout(updatedWorkout);
   };
 
   const handleAddExercise = () => {
-    const newExercise: Exercise = {
-      id: crypto.randomUUID(), // Client-side temporary ID
+    const newExercise: WorkoutExercise = {
+      id: crypto.randomUUID(),
       name: "New Exercise",
-      sets: 3,
-      reps: 10,
-      weight: "",
+      tool: "",
+      sets: [{
+        id: crypto.randomUUID(),
+        setNumber: 1,
+        loggedWeight: "",
+        loggedReps: "",
+        isCompleted: false,
+      }],
     };
-    setCurrentExercises([...currentExercises, newExercise]);
+    setCurrentWorkout([...currentWorkout, newExercise]);
   };
 
-  const handleRemoveExercise = (index: number) => {
-    if (currentExercises.length <= 1) return; // Keep at least one exercise
-    const updatedExercises = currentExercises.filter((_, i) => i !== index);
-    setCurrentExercises(updatedExercises);
+  const handleRemoveExercise = (exerciseIndex: number) => {
+    if (currentWorkout.length <= 1 && currentWorkout[exerciseIndex].sets.length <=1) {
+        toast({ title: "Cannot Remove", description: "At least one exercise with one set must remain.", variant: "default" });
+        return;
+    }
+    const updatedWorkout = currentWorkout.filter((_, i) => i !== exerciseIndex);
+    setCurrentWorkout(updatedWorkout);
+     if (updatedWorkout.length === 0) { // If all exercises are removed, add a default one
+        handleAddExercise();
+    }
   };
+
+  const handleAddSet = (exerciseIndex: number) => {
+    const updatedWorkout = [...currentWorkout];
+    const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
+    const newSetNumber = exerciseToUpdate.sets.length + 1;
+    exerciseToUpdate.sets = [
+      ...exerciseToUpdate.sets,
+      {
+        id: crypto.randomUUID(),
+        setNumber: newSetNumber,
+        loggedWeight: "", // Default to last set's weight or empty
+        loggedReps: "",   // Default to last set's reps or empty
+        isCompleted: false,
+      },
+    ];
+    updatedWorkout[exerciseIndex] = exerciseToUpdate;
+    setCurrentWorkout(updatedWorkout);
+  };
+
+  const handleRemoveSet = (exerciseIndex: number, setIndex: number) => {
+    const updatedWorkout = [...currentWorkout];
+    const exerciseToUpdate = { ...updatedWorkout[exerciseIndex] };
+    
+    if (exerciseToUpdate.sets.length <= 1) {
+      // If it's the last set of the only exercise, don't remove it.
+      // Or, remove the exercise itself if it becomes empty.
+      if (currentWorkout.length === 1) {
+         toast({ title: "Cannot Remove", description: "At least one set must remain in the workout.", variant: "default" });
+        return;
+      }
+      // If this exercise has only one set, but there are other exercises, remove this exercise.
+      handleRemoveExercise(exerciseIndex);
+      return;
+    }
+
+    exerciseToUpdate.sets = exerciseToUpdate.sets.filter((_, i) => i !== setIndex)
+      .map((s, idx) => ({ ...s, setNumber: idx + 1 })); // Re-number sets
+    
+    updatedWorkout[exerciseIndex] = exerciseToUpdate;
+    setCurrentWorkout(updatedWorkout);
+  };
+
 
   if (isLoading) {
     return (
@@ -64,12 +137,8 @@ export function WorkoutLogger({
         <CardContent className="space-y-4">
           {[1, 2, 3].map(i => (
             <div key={i} className="space-y-2 p-4 border rounded-md">
-              <Skeleton className="h-6 w-3/4" />
-              <div className="grid grid-cols-3 gap-2">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
+              <Skeleton className="h-6 w-3/4 mb-3" />
+              {[1,2].map(s => <Skeleton key={s} className="h-10 w-full mb-2" />)}
             </div>
           ))}
         </CardContent>
@@ -92,31 +161,37 @@ export function WorkoutLogger({
         </div>
       </CardHeader>
       <CardContent className="pt-6">
-        {currentExercises.length === 0 ? (
+        {currentWorkout.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>No exercises loaded. Add an exercise to get started or select a day with a template.</p>
           </div>
         ) : (
-          currentExercises.map((exercise, index) => (
-            <ExerciseEditorCard
-              key={exercise.id || index} // Use exercise.id if available (from template), else index
+          currentWorkout.map((exercise, index) => (
+            <ExerciseDetailCard
+              key={exercise.id}
               exercise={exercise}
-              index={index}
-              onExerciseChange={handleExerciseChange}
+              exerciseIndex={index}
+              onExerciseChange={handleExerciseDetailChange}
+              onSetChange={handleSetChange}
+              onAddSet={handleAddSet}
+              onRemoveSet={handleRemoveSet}
               onRemoveExercise={handleRemoveExercise}
-              isOnlyExercise={currentExercises.length === 1}
+              isOnlyExercise={currentWorkout.length === 1}
             />
           ))
         )}
         <div className="mt-6 flex flex-col sm:flex-row justify-between gap-3">
           <Button onClick={handleAddExercise} variant="outline" disabled={isLogging || isSavingRoutine}>
-            <PlusCircle className="mr-2 h-4 w-4" /> Add Exercise
+            <PlusCircle className="mr-2 h-4 w-4" /> Add Exercise Type
           </Button>
           <div className="flex flex-col sm:flex-row gap-3">
-            <Button onClick={onSaveRoutine} disabled={isLogging || isSavingRoutine || currentExercises.length === 0}>
-              {isSavingRoutine ? "Saving..." : <><Save className="mr-2 h-4 w-4" /> Save as Routine</>}
+             <Button onClick={() => onSaveRoutine(templateName || `Custom Routine Day ${selectedDay}`)} disabled={isLogging || isSavingRoutine || currentWorkout.length === 0}>
+                {isSavingRoutine ? "Saving..." : <><Save className="mr-2 h-4 w-4" /> Save as Routine</>}
             </Button>
-            <Button onClick={onLogWorkout} disabled={isLogging || isSavingRoutine || currentExercises.length === 0}>
+            <Button 
+              onClick={onLogWorkout} 
+              disabled={isLogging || isSavingRoutine || currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.every(s => !s.isCompleted))}
+            >
               {isLogging ? "Logging..." : <><Send className="mr-2 h-4 w-4" /> Log Workout</>}
             </Button>
           </div>

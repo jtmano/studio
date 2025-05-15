@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState } from 'react';
@@ -16,32 +17,41 @@ import {
 import { Save } from 'lucide-react';
 
 interface RoutineControlsProps {
-  onSaveRoutine: (name: string, dayIdentifier: number) => Promise<void>;
-  currentDay: number; // To prefill or associate the routine with a day
+  onSaveRoutine: (name: string) => Promise<void>; // Removed dayIdentifier from here
+  currentDay: number;
   isSaving: boolean;
   disabled?: boolean;
+  defaultRoutineName?: string;
 }
 
-export function RoutineControls({ onSaveRoutine, currentDay, isSaving, disabled }: RoutineControlsProps) {
+export function RoutineControls({ onSaveRoutine, currentDay, isSaving, disabled, defaultRoutineName }: RoutineControlsProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [routineName, setRoutineName] = useState(`My Routine - Day ${currentDay}`);
+  // Use defaultRoutineName if provided, otherwise fallback to a generic name
+  const [routineName, setRoutineName] = useState(defaultRoutineName || `My Routine - Day ${currentDay}`);
+
+  // Update routineName if defaultRoutineName changes (e.g. template loads)
+  React.useEffect(() => {
+    setRoutineName(defaultRoutineName || `My Routine - Day ${currentDay}`);
+  }, [defaultRoutineName, currentDay]);
+
 
   const handleSave = async () => {
     if (!routineName.trim()) {
-      // Basic validation, can add more robust error handling
-      alert("Please enter a name for the routine.");
+      alert("Please enter a name for the routine."); // Consider using toast for consistency
       return;
     }
-    await onSaveRoutine(routineName.trim(), currentDay);
-    setIsOpen(false); // Close dialog on successful save
+    // Day identifier is now handled by the parent component (page.tsx)
+    await onSaveRoutine(routineName.trim());
+    setIsOpen(false); 
   };
   
-  // Update routineName if currentDay changes and dialog is not open (or on initial mount)
-  // This is tricky with dialogs, better to set it when dialog opens or rely on user input.
-  // For simplicity, we'll just prefill it. User can change it.
-
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={(open) => {
+      setIsOpen(open);
+      if (open) { // When dialog opens, ensure routine name is up-to-date
+        setRoutineName(defaultRoutineName || `My Routine - Day ${currentDay}`);
+      }
+    }}>
       <DialogTrigger asChild>
         <Button variant="outline" disabled={disabled || isSaving}>
           <Save className="mr-2 h-4 w-4" />
@@ -52,8 +62,7 @@ export function RoutineControls({ onSaveRoutine, currentDay, isSaving, disabled 
         <DialogHeader>
           <DialogTitle>Save Routine</DialogTitle>
           <DialogDescription>
-            Save the current set of exercises as a new routine template.
-            It will be associated with Day {currentDay}.
+            Save the current set of exercises as a new routine template for Day {currentDay}.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
@@ -66,7 +75,7 @@ export function RoutineControls({ onSaveRoutine, currentDay, isSaving, disabled 
               value={routineName}
               onChange={(e) => setRoutineName(e.target.value)}
               className="col-span-3"
-              placeholder={`e.g., Morning Power Sesh - Day ${currentDay}`}
+              placeholder={`e.g., Morning Power - Day ${currentDay}`}
             />
           </div>
         </div>
@@ -82,3 +91,4 @@ export function RoutineControls({ onSaveRoutine, currentDay, isSaving, disabled 
     </Dialog>
   );
 }
+

@@ -1,52 +1,23 @@
+
 // @ts-nocheck
 "use server";
-import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutLogEntry, Exercise } from "@/types/fitness";
+import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutExercise, IndividualSet, LoggedSetInfo, Exercise as AISuggestionExerciseType } from "@/types/fitness";
 import { suggestExercise as performAiExerciseSuggestion } from "@/ai/flows/suggest-exercise";
 import type { SuggestExerciseInput, SuggestExerciseOutput } from "@/ai/flows/suggest-exercise";
-import { supabase } from "./supabaseClient"; // Import Supabase client
+import { supabase } from "./supabaseClient";
 
-// Mock database for other functions (history, saving routine)
-let mockTemplates: WorkoutTemplate[] = [
-  // This array will no longer be used by loadWorkoutTemplate but kept for other functions or future use.
-  { id: "tpl1", name: "Day 1: Push Power (Mock)", dayIdentifier: 1, exercises: [
-    { id: "ex1", name: "Bench Press", sets: 3, reps: 8, weight: "50kg", tool: "Barbell" },
-    { id: "ex2", name: "Overhead Press", sets: 3, reps: 10, weight: "30kg", tool: "Barbell" },
-    { id: "ex3", name: "Tricep Dips", sets: 3, reps: 12, weight: "Bodyweight", tool: "Bodyweight" },
-  ]},
-   { id: "tpl2", name: "Day 2: Pull Strength (Mock)", dayIdentifier: 2, exercises: [
-    { id: "ex4", name: "Deadlifts", sets: 1, reps: 5, weight: "100kg", tool: "Barbell" },
-    { id: "ex5", name: "Pull Ups", sets: 3, reps: 8, weight: "Bodyweight", tool: "Bodyweight" },
-    { id: "ex6", name: "Barbell Rows", sets: 3, reps: 10, weight: "60kg", tool: "Barbell" },
-  ]},
-  { id: "tpl3", name: "Day 3: Leg Day (Mock)", dayIdentifier: 3, exercises: [
-    { id: "ex7", name: "Squats", sets: 3, reps: 8, weight: "80kg", tool: "Barbell" },
-    { id: "ex8", name: "Leg Press", sets: 3, reps: 12, weight: "120kg", tool: "Machine" },
-    { id: "ex9", name: "Hamstring Curls", sets: 3, reps: 15, weight: "40kg", tool: "Machine" },
-  ]},
-  { id: "tpl4", name: "Day 4: Upper Body Hypertrophy (Mock)", dayIdentifier: 4, exercises: [
-    { id: "ex10", name: "Incline Dumbbell Press", sets: 4, reps: 12, weight: "20kg", tool: "Dumbbell" },
-    { id: "ex11", name: "Lat Pulldowns", sets: 4, reps: 12, weight: "50kg", tool: "Machine" },
-    { id: "ex12", name: "Dumbbell Shoulder Press", sets: 4, reps: 15, weight: "15kg", tool: "Dumbbell" },
-  ]},
-  { id: "tpl5", name: "Day 5: Full Body Conditioning (Mock)", dayIdentifier: 5, exercises: [
-    { id: "ex13", name: "Kettlebell Swings", sets: 3, reps: 20, weight: "16kg", tool: "Kettlebell" },
-    { id: "ex14", name: "Box Jumps", sets: 3, reps: 10, weight: "Bodyweight", tool: "Plyo Box" },
-    { id: "ex15", name: "Plank", sets: 3, reps: 60, weight: "Bodyweight", tool: "Bodyweight" }, // reps as seconds
-  ]},
-];
-
+// Mock database for history (saving routine will need update if it uses mockTemplates)
 let mockWorkoutHistory: WorkoutHistoryItem[] = [];
 let nextHistoryId = 1;
-let nextTemplateIdCounter = mockTemplates.length + 1; // For mock saveRoutine if used
 
 export async function loadWorkoutTemplate(dayIdentifier: number): Promise<WorkoutTemplate | null> {
   console.log(`Loading template for day: ${dayIdentifier} from Supabase`);
   await new Promise(resolve => setTimeout(resolve, 250)); // Simulate network delay
 
   const { data: templateRows, error } = await supabase
-    .from('Templates') // Ensure this table name matches your Supabase table
-    .select('Exercise, Tool') // Column names from your screenshot
-    .eq('Day', dayIdentifier); // 'Day' column from your screenshot
+    .from('Templates')
+    .select('Exercise, Tool') // Assuming these are columns for exercise name and tool
+    .eq('Day', dayIdentifier);
 
   if (error) {
     console.error("Error fetching template from Supabase:", error);
@@ -58,76 +29,128 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
     return null;
   }
 
-  const groupedExercises = new Map<string, Exercise>();
+  const exercisesMap = new Map<string, WorkoutExercise>();
 
-  templateRows.forEach(row => {
-    // Ensure correct casing for 'Exercise' and 'Tool' if necessary
+  templateRows.forEach((row, index) => {
     const exerciseName = row.Exercise;
     const toolName = row.Tool;
-    const key = `${exerciseName}-${toolName}`;
+    const exerciseKey = `${exerciseName}-${toolName || 'notool'}`;
 
-    if (groupedExercises.has(key)) {
-      const existingExercise = groupedExercises.get(key)!;
-      existingExercise.sets = (existingExercise.sets || 0) + 1;
-    } else {
-      groupedExercises.set(key, {
-        id: crypto.randomUUID(),
+    if (!exercisesMap.has(exerciseKey)) {
+      exercisesMap.set(exerciseKey, {
+        id: crypto.randomUUID(), // Unique ID for this exercise type in the workout
         name: exerciseName,
         tool: toolName,
-        sets: 1,
-        reps: 10, // Default reps
-        weight: "", // Default weight
+        sets: [],
       });
     }
-  });
 
-  const exercisesArray = Array.from(groupedExercises.values());
+    const currentExercise = exercisesMap.get(exerciseKey)!;
+    currentExercise.sets.push({
+      id: crypto.randomUUID(), // Unique ID for this specific set
+      setNumber: currentExercise.sets.length + 1,
+      // Target weight/reps from template are not in DB schema, so user fills them
+      // Or, if your DB has target_weight, target_reps, use row.target_weight, row.target_reps
+      targetWeight: "", // Default or from row if available
+      targetReps: undefined, // Default or from row if available
+      loggedWeight: "", // Initially empty, user fills this
+      loggedReps: "",   // Initially empty, user fills this
+      isCompleted: false,
+    });
+  });
 
   return {
     id: `supabase-day-${dayIdentifier}-${crypto.randomUUID()}`,
-    name: `Day ${dayIdentifier} Workout`,
+    name: `Day ${dayIdentifier} Workout`, // You might want a 'TemplateName' column in Supabase
     dayIdentifier: dayIdentifier,
-    exercises: exercisesArray,
+    exercises: Array.from(exercisesMap.values()),
   };
 }
 
-export async function logWorkout(week: number, day: number, exercises: WorkoutLogEntry[]): Promise<WorkoutHistoryItem> {
+export async function logWorkout(week: number, day: number, currentWorkoutExercises: WorkoutExercise[]): Promise<WorkoutHistoryItem> {
   console.log(`Logging workout for Week ${week}, Day ${day}`);
-  await new Promise(resolve => setTimeout(resolve, 500));
+  await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+
+  const loggedSets: LoggedSetInfo[] = [];
+  currentWorkoutExercises.forEach(exercise => {
+    exercise.sets.forEach(set => {
+      if (set.isCompleted) {
+        loggedSets.push({
+          exerciseName: exercise.name,
+          tool: exercise.tool,
+          setNumber: set.setNumber,
+          weight: set.loggedWeight, // Log the values entered by the user
+          reps: set.loggedReps,     // Log the values entered by the user
+          notes: set.notes,
+        });
+      }
+    });
+  });
+
+  if (loggedSets.length === 0) {
+    // Or handle as you see fit, maybe log an empty workout or prevent it
+    console.log("No sets were completed. Not logging an empty workout history item.");
+    // Depending on desired behavior, you might throw an error or return a specific status
+    throw new Error("No sets were marked as completed. Workout not logged.");
+  }
+
   const newEntry: WorkoutHistoryItem = {
     id: `hist${nextHistoryId++}`,
     date: new Date().toISOString(),
     week,
     day,
-    exercises: JSON.parse(JSON.stringify(exercises)), // Deep copy
+    // workoutName: "Dynamic Workout", // Consider how to get this if needed
+    loggedSets,
   };
-  mockWorkoutHistory.unshift(newEntry); // Add to beginning for recent first
+  mockWorkoutHistory.unshift(newEntry);
   console.log("Workout logged:", newEntry);
   return newEntry;
 }
 
+
 export async function getWorkoutHistory(): Promise<WorkoutHistoryItem[]> {
   console.log("Fetching workout history");
   await new Promise(resolve => setTimeout(resolve, 500));
-  return JSON.parse(JSON.stringify(mockWorkoutHistory)); // Deep copy
+  return JSON.parse(JSON.stringify(mockWorkoutHistory));
 }
 
-export async function saveRoutine(name: string, dayIdentifier: number, exercises: Exercise[]): Promise<WorkoutTemplate> {
-  console.log(`Saving routine (mock): ${name} for day identifier ${dayIdentifier}`);
-  // This function still uses the mockTemplates array. 
-  // To save to Supabase, this would need to be rewritten.
+export async function saveRoutine(name: string, dayIdentifier: number, exercisesToSave: WorkoutExercise[]): Promise<WorkoutTemplate> {
+  console.log(`Saving routine: ${name} for day identifier ${dayIdentifier}`);
+  // This function needs to be adapted if you want to save to Supabase.
+  // The current implementation is mock and may not align perfectly with new types if it used old mockTemplates.
+  // For now, it constructs a new template based on the WorkoutExercise[] structure.
   await new Promise(resolve => setTimeout(resolve, 500));
+
+  // Ensure exercisesToSave are deep copied and IDs are fresh if necessary
+  const processedExercises = exercisesToSave.map(ex => ({
+    ...ex,
+    id: crypto.randomUUID(), // New ID for the exercise in this template
+    sets: ex.sets.map(s => ({
+      ...s,
+      id: crypto.randomUUID(), // New ID for the set in this template
+      // When saving as a template, loggedWeight/loggedReps become targetWeight/targetReps
+      targetWeight: s.loggedWeight,
+      targetReps: s.loggedReps ? Number(s.loggedReps) : undefined,
+      loggedWeight: "", // Clear logged values for template
+      loggedReps: "",
+      isCompleted: false, // Reset completion status for template
+    })),
+  }));
+
   const newTemplate: WorkoutTemplate = {
-    id: `tpl-mock-${nextTemplateIdCounter++}`,
+    id: `tpl-dynamic-${crypto.randomUUID()}`,
     name,
     dayIdentifier,
-    exercises: JSON.parse(JSON.stringify(exercises)), // Deep copy
+    exercises: processedExercises,
   };
-  // mockTemplates.push(newTemplate); // Decide if you want to add to the mock list
-  console.log("Routine saved (mock):", newTemplate);
-  // For now, let's not interact with mockTemplates here to avoid confusion with Supabase loading
+  // mockTemplates.push(newTemplate); // This was for the old mock system.
+  console.log("Routine saved (conceptually):", newTemplate);
+  // Here you would implement Supabase insert logic for the template and its exercises/sets.
+  // This might involve inserting into multiple tables if your Supabase schema is normalized.
+  // For now, we return the created template object.
   return newTemplate;
 }
+
 
 export async function suggestExercise(input: SuggestExerciseInput): Promise<SuggestExerciseOutput> {
   console.log("Requesting AI exercise suggestion with input:", input);

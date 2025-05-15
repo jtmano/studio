@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
@@ -7,57 +8,64 @@ import { WorkoutLogger } from '@/components/fitness/WorkoutLogger';
 import { ProgressDisplay } from '@/components/fitness/ProgressDisplay';
 import { AiExerciseSuggester } from '@/components/fitness/AiExerciseSuggester';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Toaster } from "@/components/ui/toaster";
+import { Toaster } from "@/components/ui/toaster"; // Keep for existing toast setup
 import { useToast } from "@/hooks/use-toast";
-import type { Exercise, WorkoutHistoryItem, WorkoutTemplate } from '@/types/fitness';
-import { loadWorkoutTemplate, logWorkout, getWorkoutHistory, saveRoutine as saveRoutineAction } from '@/lib/actions'; // Server actions
+import type { WorkoutExercise, WorkoutHistoryItem, WorkoutTemplate } from '@/types/fitness'; // Updated types
+import { loadWorkoutTemplate, logWorkout, getWorkoutHistory, saveRoutine as saveRoutineAction } from '@/lib/actions';
 import { Dumbbell, LineChart, Lightbulb } from 'lucide-react';
 
 export default function FitnessFocusPage() {
   const { toast } = useToast();
 
-  // Date State
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [selectedDay, setSelectedDay] = useState<number>(1);
 
-  // Workout State
-  const [currentExercises, setCurrentExercises] = useState<Exercise[]>([]);
+  const [currentWorkout, setCurrentWorkout] = useState<WorkoutExercise[]>([]);
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
-  const [initialTemplateExercises, setInitialTemplateExercises] = useState<Exercise[]>([]);
+  const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-
-  // Loading/Action States
   const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
   const [isSavingRoutine, setIsSavingRoutine] = useState<boolean>(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
 
-  // Data State
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
   
+  const getDefaultExercise = (): WorkoutExercise[] => [{
+    id: crypto.randomUUID(),
+    name: "New Exercise",
+    tool: "",
+    sets: [{ id: crypto.randomUUID(), setNumber: 1, loggedWeight: "", loggedReps: "", isCompleted: false }],
+  }];
+
   const fetchTemplate = useCallback(async (day: number) => {
     setIsLoadingTemplate(true);
     try {
       const template = await loadWorkoutTemplate(day);
-      if (template) {
-        const exercisesWithClientIds = template.exercises.map(ex => ({ ...ex, id: ex.id || crypto.randomUUID() }));
-        setCurrentExercises(exercisesWithClientIds);
-        setInitialTemplateExercises(JSON.parse(JSON.stringify(exercisesWithClientIds))); // Deep copy for reset
+      if (template && template.exercises.length > 0) {
+        // Ensure all exercises and sets have client IDs if not provided by backend
+        const processedExercises = template.exercises.map(ex => ({
+          ...ex,
+          id: ex.id || crypto.randomUUID(),
+          sets: ex.sets.map(s => ({ ...s, id: s.id || crypto.randomUUID() })),
+        }));
+        setCurrentWorkout(processedExercises);
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises)));
         setLoadedTemplateName(template.name);
         toast({ title: "Template Loaded", description: `${template.name} for Day ${day} loaded.` });
       } else {
-        const defaultExercise = { id: crypto.randomUUID(), name: "New Exercise", sets: 3, reps: 10, weight: "" };
-        setCurrentExercises([defaultExercise]);
-        setInitialTemplateExercises([JSON.parse(JSON.stringify(defaultExercise))]);
+        const defaultWorkout = getDefaultExercise();
+        setCurrentWorkout(defaultWorkout);
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
         setLoadedTemplateName(undefined);
         toast({ title: "No Template Found", description: `No template for Day ${day}. Started with a blank slate.`, variant: "default" });
       }
     } catch (error) {
       console.error("Failed to load template:", error);
       toast({ title: "Error Loading Template", description: "Could not load workout template.", variant: "destructive" });
-      const defaultExercise = { id: crypto.randomUUID(), name: "New Exercise", sets: 3, reps: 10, weight: "" };
-      setCurrentExercises([defaultExercise]);
-      setInitialTemplateExercises([JSON.parse(JSON.stringify(defaultExercise))]);
+      const defaultWorkout = getDefaultExercise();
+      setCurrentWorkout(defaultWorkout);
+      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
       setLoadedTemplateName(undefined);
     } finally {
       setIsLoadingTemplate(false);
@@ -86,40 +94,48 @@ export default function FitnessFocusPage() {
   }, [fetchHistory]);
   
   const handleResetToTemplate = () => {
-    setCurrentExercises(JSON.parse(JSON.stringify(initialTemplateExercises))); // Reset to the initially loaded template
-    toast({ title: "Workout Reset", description: "Exercises reset to the loaded template." });
+    if (initialTemplateWorkout.length > 0) {
+      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout)));
+      toast({ title: "Workout Reset", description: "Exercises reset to the loaded template." });
+    } else {
+       const defaultWorkout = getDefaultExercise();
+       setCurrentWorkout(defaultWorkout);
+       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+       toast({ title: "Workout Reset", description: "Reset to a blank slate." });
+    }
   };
 
   const handleLogWorkout = async () => {
-    if (currentExercises.length === 0) {
-      toast({ title: "Cannot Log Empty Workout", description: "Add some exercises first.", variant: "destructive" });
+    if (currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.length === 0)) {
+      toast({ title: "Cannot Log Empty Workout", description: "Add some exercises and sets first.", variant: "destructive" });
+      return;
+    }
+    if (currentWorkout.every(ex => ex.sets.every(s => !s.isCompleted))) {
+      toast({ title: "No Sets Logged", description: "Please mark at least one set as completed to log the workout.", variant: "default" });
       return;
     }
     setIsLoggingWorkout(true);
     try {
-      // Ensure all exercises have a valid ID; this might be redundant if templates provide IDs.
-      const exercisesToLog = currentExercises.map(ex => ({...ex, id: ex.id || crypto.randomUUID()}));
-      await logWorkout(selectedWeek, selectedDay, exercisesToLog);
+      await logWorkout(selectedWeek, selectedDay, currentWorkout);
       toast({ title: "Workout Logged!", description: `Workout for Week ${selectedWeek}, Day ${selectedDay} saved.` });
-      fetchHistory(); // Refresh history
+      fetchHistory(); 
     } catch (error) {
       console.error("Failed to log workout:", error);
-      toast({ title: "Logging Failed", description: "Could not save your workout.", variant: "destructive" });
+      toast({ title: "Logging Failed", description: (error as Error).message || "Could not save your workout.", variant: "destructive" });
     } finally {
       setIsLoggingWorkout(false);
     }
   };
 
   const handleSaveRoutine = async (routineName: string) => {
-     if (currentExercises.length === 0) {
-      toast({ title: "Cannot Save Empty Routine", description: "Add some exercises first.", variant: "destructive" });
+     if (currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.length === 0)) {
+      toast({ title: "Cannot Save Empty Routine", description: "Add some exercises and sets first.", variant: "destructive" });
       return;
     }
     setIsSavingRoutine(true);
     try {
-      await saveRoutineAction(routineName, selectedDay, currentExercises);
+      await saveRoutineAction(routineName, selectedDay, currentWorkout);
       toast({ title: "Routine Saved!", description: `Routine "${routineName}" has been saved.` });
-      // Potentially refresh template list if displayed, or just notify user.
     } catch (error) {
       console.error("Failed to save routine:", error);
       toast({ title: "Save Routine Failed", description: "Could not save the routine.", variant: "destructive" });
@@ -127,7 +143,6 @@ export default function FitnessFocusPage() {
       setIsSavingRoutine(false);
     }
   };
-
 
   return (
     <div className="min-h-screen flex flex-col bg-secondary/20">
@@ -149,15 +164,16 @@ export default function FitnessFocusPage() {
               isLoadingTemplate={isLoadingTemplate}
             />
             <WorkoutLogger
-              currentExercises={currentExercises}
-              setCurrentExercises={setCurrentExercises}
+              currentWorkout={currentWorkout}
+              setCurrentWorkout={setCurrentWorkout}
               onLogWorkout={handleLogWorkout}
-              onSaveRoutine={(name) => handleSaveRoutine(name)}
+              onSaveRoutine={handleSaveRoutine}
               onResetTemplate={handleResetToTemplate}
               isLoading={isLoadingTemplate}
               isLogging={isLoggingWorkout}
               isSavingRoutine={isSavingRoutine}
               templateName={loadedTemplateName}
+              selectedDay={selectedDay}
             />
           </TabsContent>
 
@@ -170,7 +186,7 @@ export default function FitnessFocusPage() {
           </TabsContent>
         </Tabs>
       </main>
-      <Toaster />
+      <Toaster /> {/* This is correct for useToast hook */}
       <footer className="text-center p-4 text-sm text-muted-foreground border-t">
         Fitness Focus &copy; {new Date().getFullYear()}
       </footer>

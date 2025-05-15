@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { WorkoutHistoryItem } from "@/types/fitness";
@@ -7,6 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { LineChart, History } from 'lucide-react';
 import { format } from 'date-fns';
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+
 
 interface ProgressDisplayProps {
   history: WorkoutHistoryItem[];
@@ -52,7 +55,7 @@ export function ProgressDisplay({ history, isLoading }: ProgressDisplayProps) {
                   <TableHead>Date</TableHead>
                   <TableHead>Week</TableHead>
                   <TableHead>Day</TableHead>
-                  <TableHead>Exercises</TableHead>
+                  <TableHead className="min-w-[300px]">Logged Sets</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -62,13 +65,34 @@ export function ProgressDisplay({ history, isLoading }: ProgressDisplayProps) {
                     <TableCell>{item.week}</TableCell>
                     <TableCell>{item.day}</TableCell>
                     <TableCell>
-                      <ul className="list-disc list-inside">
-                        {item.exercises.map((ex, idx) => (
-                          <li key={idx} className="text-sm">
-                            {ex.name}: {ex.sets} sets, {ex.reps} reps @ {ex.weight || 'N/A'}
-                          </li>
-                        ))}
-                      </ul>
+                      {item.loggedSets && item.loggedSets.length > 0 ? (
+                        <div className="space-y-2">
+                          {item.loggedSets.reduce<JSX.Element[][]>((acc, set, idx, arr) => {
+                            // Group sets by exercise name for display
+                            if (idx === 0 || set.exerciseName !== arr[idx - 1].exerciseName) {
+                              acc.push([]);
+                            }
+                            acc[acc.length - 1].push(
+                              <div key={`${item.id}-set-${idx}`} className="p-2 rounded-md bg-secondary/30">
+                                {idx === 0 || set.exerciseName !== arr[idx -1].exerciseName ? (
+                                   <p className="font-semibold text-sm mb-1">{set.exerciseName} {set.tool ? <Badge variant="outline" className="ml-1 text-xs">{set.tool}</Badge> : ''}</p>
+                                ) : null}
+                                <p className="text-xs">
+                                  Set {set.setNumber}: {set.weight} x {set.reps} reps
+                                  {set.notes && <span className="text-muted-foreground italic ml-1">({set.notes})</span>}
+                                </p>
+                              </div>
+                            );
+                            return acc;
+                          }, []).map((exerciseGroup, groupIdx) => (
+                            <div key={`ex-group-${groupIdx}`} className="mb-1 last:mb-0">
+                              {exerciseGroup}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No sets logged for this entry.</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

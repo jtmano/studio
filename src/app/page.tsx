@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Header } from '@/components/layout/Header';
 import { DateSelector } from '@/components/fitness/DateSelector';
 import { WorkoutLogger } from '@/components/fitness/WorkoutLogger';
@@ -23,15 +23,17 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true); // Start true for initial fetch
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
-  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true); 
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
   
   const [isSavingState, setIsSavingState] = useState<boolean>(false);
   const [isLoadingWeekDay, setIsLoadingWeekDay] = useState<boolean>(false);
   const [isPopulatingWorkout, setIsPopulatingWorkout] = useState<boolean>(false);
-  const [justLoadedState, setJustLoadedState] = useState<boolean>(false); 
+  
+  // Use a ref for one-shot flag to prevent re-triggering effects
+  const justLoadedStateRef = useRef<boolean>(false); 
   
   const getDefaultExercise = useCallback((): WorkoutExercise[] => [{
     id: crypto.randomUUID(),
@@ -63,8 +65,8 @@ export default function FitnessFocusPage() {
             id: s.id || crypto.randomUUID(),
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-            loggedWeight: "", // Templates provide structure, not logged data
-            loggedReps: "",   // Templates provide structure, not logged data
+            loggedWeight: "", 
+            loggedReps: "",   
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
@@ -97,12 +99,14 @@ export default function FitnessFocusPage() {
     if (isLoadingWeekDay || isPopulatingWorkout) {
       return; 
     }
-    if (justLoadedState) {
-      setJustLoadedState(false); 
+    // If justLoadedStateRef is true, it means "Populate Workout" just ran and set the workout.
+    // We consume the flag and skip fetching the template for this render cycle.
+    if (justLoadedStateRef.current) {
+      justLoadedStateRef.current = false; 
       return;
     }
     fetchTemplateForDay(selectedDay);
-  }, [selectedDay, fetchTemplateForDay, isLoadingWeekDay, isPopulatingWorkout, justLoadedState, setJustLoadedState]);
+  }, [selectedDay, fetchTemplateForDay, isLoadingWeekDay, isPopulatingWorkout]);
 
 
   const fetchHistory = useCallback(async () => {
@@ -210,7 +214,7 @@ export default function FitnessFocusPage() {
 
   const handleLoadWeekAndDay = useCallback(async () => {
     setIsLoadingWeekDay(true);
-    setJustLoadedState(false); // Allow template reset/fetch for the new day
+    justLoadedStateRef.current = false; // Allow template fetch for the new day
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState) {
@@ -226,11 +230,11 @@ export default function FitnessFocusPage() {
     } finally {
       setIsLoadingWeekDay(false);
     }
-  }, [toast, setSelectedWeek, setSelectedDay, setJustLoadedState, setIsLoadingWeekDay]);
+  }, [toast, setSelectedWeek, setSelectedDay, setIsLoadingWeekDay]);
 
   const handlePopulateLoggedInfo = useCallback(async () => {
     setIsPopulatingWorkout(true);
-    setJustLoadedState(true); // Prevent template fetch from overwriting this
+    justLoadedStateRef.current = true; // Signal to prevent template fetch from overwriting this
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState && loadedState.currentWorkout) {
@@ -272,20 +276,21 @@ export default function FitnessFocusPage() {
         setCurrentWorkout(processedCurrentWorkout);
         setInitialTemplateWorkout(processedInitialTemplateWorkout);
         setLoadedTemplateName(loadedState.loadedTemplateName);
-        
+        // We expect the useEffect for selectedDay to see justLoadedStateRef.current = true
+        // and skip template loading.
         toast({ title: "Workout Info Populated", description: "Logged data applied to the current day." });
       } else {
         toast({ title: "No Workout Data", description: "No saved workout data found to populate.", variant: "default" });
-        setJustLoadedState(false); // If no data, allow template fetch for current day
+        justLoadedStateRef.current = false; // If no data, allow template fetch for current day
       }
     } catch (error) {
       console.error("Failed to populate workout info from app state:", error);
       toast({ title: "Population Failed", description: "Could not populate workout data.", variant: "destructive" });
-      setJustLoadedState(false); // On error, allow template fetch
+      justLoadedStateRef.current = false; // On error, allow template fetch
     } finally {
       setIsPopulatingWorkout(false);
     }
-  }, [toast, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName, setJustLoadedState, setIsPopulatingWorkout]);
+  }, [toast, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName, setIsPopulatingWorkout]);
 
   return (
     <div className="min-h-screen flex flex-col bg-secondary/20">
@@ -339,6 +344,4 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-
-
     

@@ -23,11 +23,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className="dark"> {/* Added "dark" class here */}
-      {/*
-        Applying GeistSans.variable to the body (or html) tag makes the CSS variable
-        --font-geist-sans available. The globals.css file already sets the font-family
-        on the body using this variable.
-      */}
       <body className={`${GeistSans.variable} font-sans antialiased`}>
         {children}
         <Toaster />

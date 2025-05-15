@@ -23,82 +23,66 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false); // Initialize to false
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
-  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true); // Start true to fetch history initially
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
   
   const [isSavingState, setIsSavingState] = useState<boolean>(false);
-  const [isLoadingState, setIsLoadingState] = useState<boolean>(false); 
+  const [isLoadingWeekDay, setIsLoadingWeekDay] = useState<boolean>(false);
+  const [isPopulatingWorkout, setIsPopulatingWorkout] = useState<boolean>(false);
   const [justLoadedState, setJustLoadedState] = useState<boolean>(false); 
   
-  const getDefaultExercise = (): WorkoutExercise[] => [{
+  const getDefaultExercise = useCallback((): WorkoutExercise[] => [{
     id: crypto.randomUUID(),
     name: "New Exercise",
     tool: "",
     sets: [{
         id: crypto.randomUUID(),
         setNumber: 1,
-        targetWeight: "", // Ensure all fields from IndividualSet are present
+        targetWeight: "", 
         targetReps: undefined,
         loggedWeight: "",
         loggedReps: "",
-        notes: "",       // Initialize notes
+        notes: "",       
         isCompleted: false
     }],
-  }];
+  }], []);
 
-  const fetchTemplate = useCallback(async (day: number) => {
-    // The check `if (justLoadedState)` is now primarily handled by the useEffect that calls fetchTemplate.
-    // This function will only be called if justLoadedState is false.
+  const resetToBlankWorkoutForDay = useCallback(async (day: number) => {
     setIsLoadingTemplate(true);
+    // This function now only resets to a blank state or loads a placeholder.
+    // It no longer fetches external templates unless modified to do so.
     try {
-      const template = await loadWorkoutTemplate(day);
+      // Simulating a "template" load that just provides a blank slate.
+      // If you had actual Supabase template fetching, it would go here,
+      // but for now, it aligns with "completely disable template loading".
       const defaultWorkout = getDefaultExercise();
-      if (template && template.exercises.length > 0) {
-        const processedExercises = template.exercises.map((ex: WorkoutExercise) => ({
-          ...ex,
-          id: ex.id || crypto.randomUUID(),
-          sets: ex.sets.map((s: IndividualSet) => ({
-            ...s,
-            id: s.id || crypto.randomUUID(),
-            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
-                        (s.loggedReps === '') ? "" : "",
-            notes: s.notes || "",
-            isCompleted: s.isCompleted || false,
-          })),
-        }));
-        setCurrentWorkout(processedExercises);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises))); // Deep clone for reset
-        setLoadedTemplateName(template.name);
-        toast({ title: "Template Loaded", description: `${template.name} for Day ${day} loaded.` });
-      } else {
-        setCurrentWorkout(defaultWorkout);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
-        setLoadedTemplateName(undefined);
-      }
-    } catch (error) {
-      console.error("Failed to load template:", error);
-      const defaultWorkout = getDefaultExercise();
-      toast({ title: "Error Loading Template", description: "Could not load workout template.", variant: "destructive" });
       setCurrentWorkout(defaultWorkout);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
-      setLoadedTemplateName(undefined);
+      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+      setLoadedTemplateName(`Day ${day} (Blank)`); // Indicate it's a blank slate for the day
+      // toast({ title: "Workout Area Reset", description: `Ready for Day ${day}.` });
+    } catch (error) {
+      console.error("Failed to reset workout area:", error);
+      toast({ title: "Error Resetting", description: "Could not reset workout area.", variant: "destructive" });
     } finally {
       setIsLoadingTemplate(false);
     }
-  }, [toast, setIsLoadingTemplate, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
+  }, [toast, getDefaultExercise, setIsLoadingTemplate, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
 
 
   useEffect(() => {
-    if (isLoadingState || justLoadedState) { // If loading state OR if state was just loaded, don't fetch template.
+    // This effect handles resetting to a blank template when the day changes,
+    // or when loading indicators are off and state wasn't just populated.
+    if (isLoadingWeekDay || isPopulatingWorkout) {
+      return; // Don't do anything if a load operation is active
+    }
+    if (justLoadedState) {
+      setJustLoadedState(false); // Workout info was just populated, don't reset, just clear the flag.
       return;
     }
-    fetchTemplate(selectedDay);
-  }, [selectedDay, fetchTemplate, isLoadingState, justLoadedState]); // Added isLoadingState and justLoadedState
+    resetToBlankWorkoutForDay(selectedDay);
+  }, [selectedDay, resetToBlankWorkoutForDay, isLoadingWeekDay, isPopulatingWorkout, justLoadedState]);
 
 
   const fetchHistory = useCallback(async () => {
@@ -115,20 +99,20 @@ export default function FitnessFocusPage() {
   }, [toast, setIsLoadingHistory, setWorkoutHistory]); 
 
   useEffect(() => {
-    fetchHistory();
+     fetchHistory();
   }, [fetchHistory]);
   
-  const handleResetToTemplate = () => {
+  const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
-      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout))); // Deep clone for reset
-      toast({ title: "Workout Reset", description: "Exercises reset to the loaded template." });
+      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout))); 
+      toast({ title: "Workout Reset", description: "Exercises reset to the loaded template/saved state." });
     } else {
        const defaultWorkout = getDefaultExercise();
        setCurrentWorkout(defaultWorkout);
-       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
+       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); 
        toast({ title: "Workout Reset", description: "Reset to a blank slate." });
     }
-  };
+  }, [initialTemplateWorkout, getDefaultExercise, toast]);
 
   const handleLogWorkout = async () => {
     if (currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.length === 0)) {
@@ -152,17 +136,16 @@ export default function FitnessFocusPage() {
     }
   };
 
-  const handleSaveCurrentState = async () => {
+  const handleSaveCurrentState = useCallback(async () => {
     setIsSavingState(true);
-    // Deep clone and ensure notes are empty strings if null/undefined
     const currentWorkoutToSave = JSON.parse(JSON.stringify(currentWorkout.map(ex => ({
       ...ex,
       sets: ex.sets.map(s => ({
         ...s,
         notes: s.notes || "",
         loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-        loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
-                    (s.loggedReps === '') ? "" : "",
+        loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(String(s.loggedReps).trim()) : 
+                    (String(s.loggedReps).trim() === '') ? "" : "",
       }))
     }))));
 
@@ -172,8 +155,8 @@ export default function FitnessFocusPage() {
         ...s,
         notes: s.notes || "",
         loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-        loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
-                    (s.loggedReps === '') ? "" : "",
+        loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(String(s.loggedReps).trim()) : 
+                    (String(s.loggedReps).trim() === '') ? "" : "",
       }))
     }))));
 
@@ -193,18 +176,34 @@ export default function FitnessFocusPage() {
     } finally {
       setIsSavingState(false);
     }
-  };
+  }, [currentWorkout, initialTemplateWorkout, loadedTemplateName, selectedDay, selectedWeek, toast]);
 
-  const handleLoadCurrentState = async () => {
-    setIsLoadingState(true);
-    setJustLoadedState(true); // Set flag before async operation and state changes
+  const handleLoadWeekAndDay = useCallback(async () => {
+    setIsLoadingWeekDay(true);
+    setJustLoadedState(false); // Allow template reset for the new day
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState) {
         setSelectedWeek(loadedState.selectedWeek);
-        setSelectedDay(loadedState.selectedDay); // This will trigger useEffect for fetchTemplate, which should now bail out
+        setSelectedDay(loadedState.selectedDay); // This change will trigger the useEffect for resetToBlankWorkoutForDay
+        toast({ title: "Week & Day Loaded", description: `Switched to Week ${loadedState.selectedWeek}, Day ${loadedState.selectedDay}. Workout area reset.` });
+      } else {
+        toast({ title: "No Saved State", description: "No saved state found to load week/day from.", variant: "default" });
+      }
+    } catch (error) {
+      console.error("Failed to load week/day from app state:", error);
+      toast({ title: "Load Failed", description: "Could not load week/day.", variant: "destructive" });
+    } finally {
+      setIsLoadingWeekDay(false);
+    }
+  }, [toast, setSelectedWeek, setSelectedDay, setJustLoadedState]);
 
-        // Deep clone and process the loaded workouts
+  const handlePopulateLoggedInfo = useCallback(async () => {
+    setIsPopulatingWorkout(true);
+    setJustLoadedState(true); // Prevent template reset immediately after this
+    try {
+      const loadedState = await loadCurrentAppState();
+      if (loadedState && loadedState.currentWorkout) {
         const clonedCurrentWorkout = JSON.parse(JSON.stringify(loadedState.currentWorkout || []));
         const clonedInitialTemplateWorkout = JSON.parse(JSON.stringify(loadedState.initialTemplateWorkout || []));
 
@@ -217,8 +216,7 @@ export default function FitnessFocusPage() {
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
             loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
-                        (s.loggedReps === '') ? "" : "",
+            loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
@@ -233,36 +231,29 @@ export default function FitnessFocusPage() {
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
             loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : 
-                        (s.loggedReps === '') ? "" : "",
+            loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
         }));
         
         setCurrentWorkout(processedCurrentWorkout);
-        setLoadedTemplateName(loadedState.loadedTemplateName);
         setInitialTemplateWorkout(processedInitialTemplateWorkout);
+        setLoadedTemplateName(loadedState.loadedTemplateName);
         
-        toast({ title: "State Loaded", description: "Your previous state has been restored." });
+        toast({ title: "Workout Info Populated", description: "Logged data applied to the current day." });
       } else {
-        toast({ title: "No Saved State", description: "No previously saved state found.", variant: "default" });
-        setJustLoadedState(false); // Reset if no state was loaded
+        toast({ title: "No Workout Data", description: "No saved workout data found to populate.", variant: "default" });
+        setJustLoadedState(false); // If no data, allow template reset
       }
     } catch (error) {
-      console.error("Failed to load app state:", error);
-      toast({ title: "Load State Failed", description: "Could not load your saved state.", variant: "destructive" });
-      setJustLoadedState(false); // Reset on error
+      console.error("Failed to populate workout info from app state:", error);
+      toast({ title: "Population Failed", description: "Could not populate workout data.", variant: "destructive" });
+      setJustLoadedState(false); // On error, allow template reset
     } finally {
-      setIsLoadingState(false);
-      // Reset justLoadedState after a short delay to allow UI to settle and prevent immediate template fetch
-      // if selectedDay hasn't changed from what was loaded.
-      // Or, more robustly, let the useEffect for fetchTemplate handle it on the next actual day change.
-      // For now, we'll set it to false, allowing the next interaction or day change to fetch templates.
-      setTimeout(() => setJustLoadedState(false), 0);
+      setIsPopulatingWorkout(false);
     }
-  };
-
+  }, [toast, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName, setJustLoadedState]);
 
   return (
     <div className="min-h-screen flex flex-col bg-secondary/20">
@@ -281,19 +272,21 @@ export default function FitnessFocusPage() {
               setSelectedWeek={setSelectedWeek}
               selectedDay={selectedDay}
               setSelectedDay={setSelectedDay}
-              isLoadingTemplate={isLoadingTemplate || isLoadingState}
+              isLoadingTemplate={isLoadingTemplate || isLoadingWeekDay || isPopulatingWorkout}
             />
             <WorkoutLogger
               currentWorkout={currentWorkout}
               setCurrentWorkout={setCurrentWorkout}
               onLogWorkout={handleLogWorkout}
               onSaveCurrentState={handleSaveCurrentState} 
-              onLoadCurrentState={handleLoadCurrentState}
+              onLoadWeekAndDay={handleLoadWeekAndDay}
+              onPopulateLoggedInfo={handlePopulateLoggedInfo}
               onResetTemplate={handleResetToTemplate}
               isLoading={isLoadingTemplate}
               isLogging={isLoggingWorkout}
               isSavingState={isSavingState} 
-              isLoadingState={isLoadingState}
+              isLoadingWeekDay={isLoadingWeekDay}
+              isPopulatingWorkout={isPopulatingWorkout}
               templateName={loadedTemplateName}
               selectedDay={selectedDay}
             />
@@ -314,4 +307,3 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-

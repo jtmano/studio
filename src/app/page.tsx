@@ -9,7 +9,7 @@ import { ProgressDisplay } from '@/components/fitness/ProgressDisplay';
 import { AiExerciseSuggester } from '@/components/fitness/AiExerciseSuggester';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import type { WorkoutExercise, WorkoutHistoryItem, WorkoutTemplate, SerializableAppState } from '@/types/fitness';
+import type { WorkoutExercise, IndividualSet, WorkoutHistoryItem, WorkoutTemplate, SerializableAppState } from '@/types/fitness';
 import { loadWorkoutTemplate, logWorkout, getWorkoutHistory, saveCurrentAppState, loadCurrentAppState } from '@/lib/actions';
 import { Dumbbell, LineChart, Lightbulb } from 'lucide-react';
 
@@ -23,20 +23,29 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false);
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false); // Initialize to false
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
   
   const [isSavingState, setIsSavingState] = useState<boolean>(false);
-  const [isLoadingState, setIsLoadingState] = useState<boolean>(false);
-  const [justLoadedState, setJustLoadedState] = useState<boolean>(false);
+  const [isLoadingState, setIsLoadingState] = useState<boolean>(false); // Manages the loading state process
+  const [justLoadedState, setJustLoadedState] = useState<boolean>(false); // Flag to prevent template overwrite
   
   const getDefaultExercise = (): WorkoutExercise[] => [{
     id: crypto.randomUUID(),
     name: "New Exercise",
     tool: "",
-    sets: [{ id: crypto.randomUUID(), setNumber: 1, loggedWeight: "", loggedReps: "", notes: "", isCompleted: false }],
+    sets: [{
+        id: crypto.randomUUID(),
+        setNumber: 1,
+        targetWeight: "",
+        targetReps: undefined,
+        loggedWeight: "",
+        loggedReps: "",
+        notes: "",
+        isCompleted: false
+    }],
   }];
 
   const fetchTemplate = useCallback(async (day: number) => {
@@ -49,43 +58,48 @@ export default function FitnessFocusPage() {
       const template = await loadWorkoutTemplate(day);
       const defaultWorkout = getDefaultExercise();
       if (template && template.exercises.length > 0) {
-        const processedExercises = template.exercises.map(ex => ({
+        const processedExercises = template.exercises.map((ex: WorkoutExercise) => ({
           ...ex,
           id: ex.id || crypto.randomUUID(),
-          sets: ex.sets.map(s => ({ ...s, id: s.id || crypto.randomUUID(), notes: s.notes || "" })),
+          sets: ex.sets.map((s: IndividualSet) => ({
+            id: s.id || crypto.randomUUID(),
+            setNumber: s.setNumber,
+            targetWeight: s.targetWeight || "",
+            targetReps: s.targetReps || undefined,
+            loggedWeight: s.loggedWeight || "",
+            loggedReps: s.loggedReps || "",
+            notes: s.notes || "",
+            isCompleted: s.isCompleted || false,
+          })),
         }));
         setCurrentWorkout(processedExercises);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises)));
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises))); // Deep clone
         setLoadedTemplateName(template.name);
         toast({ title: "Template Loaded", description: `${template.name} for Day ${day} loaded.` });
       } else {
         setCurrentWorkout(defaultWorkout);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
         setLoadedTemplateName(undefined);
-        // toast({ title: "No Template Found", description: `No template for Day ${day}. Started with a blank slate.`, variant: "default" });
       }
     } catch (error) {
       console.error("Failed to load template:", error);
       const defaultWorkout = getDefaultExercise();
       toast({ title: "Error Loading Template", description: "Could not load workout template.", variant: "destructive" });
       setCurrentWorkout(defaultWorkout);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
       setLoadedTemplateName(undefined);
     } finally {
       setIsLoadingTemplate(false);
     }
   }, [toast, justLoadedState, setJustLoadedState, setIsLoadingTemplate, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
 
+
   useEffect(() => {
-    // If we are in the process of loading state, don't fetch a template.
-    // The loaded state will provide the currentWorkout.
-    // The justLoadedState flag (handled within fetchTemplate) will prevent
-    // an immediate template fetch after state loading completes.
-    if (isLoadingState) {
+    if (isLoadingState) { // Don't fetch template if we are in the process of loading state
       return;
     }
     fetchTemplate(selectedDay);
-  }, [selectedDay, fetchTemplate, isLoadingState]); // Added isLoadingState
+  }, [selectedDay, fetchTemplate, isLoadingState]);
 
 
   const fetchHistory = useCallback(async () => {
@@ -107,12 +121,12 @@ export default function FitnessFocusPage() {
   
   const handleResetToTemplate = () => {
     if (initialTemplateWorkout.length > 0) {
-      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout)));
+      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout))); // Deep clone
       toast({ title: "Workout Reset", description: "Exercises reset to the loaded template." });
     } else {
        const defaultWorkout = getDefaultExercise();
        setCurrentWorkout(defaultWorkout);
-       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
        toast({ title: "Workout Reset", description: "Reset to a blank slate." });
     }
   };
@@ -144,15 +158,15 @@ export default function FitnessFocusPage() {
     const appState: SerializableAppState = {
       selectedWeek,
       selectedDay,
-      currentWorkout: currentWorkout.map(ex => ({
+      currentWorkout: JSON.parse(JSON.stringify(currentWorkout.map(ex => ({ // Deep clone before saving
         ...ex,
         sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
-      })),
+      })))),
       loadedTemplateName,
-      initialTemplateWorkout: initialTemplateWorkout.map(ex => ({
+      initialTemplateWorkout: JSON.parse(JSON.stringify(initialTemplateWorkout.map(ex => ({ // Deep clone
         ...ex,
         sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
-      })),
+      })))),
     };
     try {
       await saveCurrentAppState(appState);
@@ -171,18 +185,47 @@ export default function FitnessFocusPage() {
       const loadedState = await loadCurrentAppState();
       if (loadedState) {
         setSelectedWeek(loadedState.selectedWeek);
-        setSelectedDay(loadedState.selectedDay); // This will trigger fetchTemplate's useEffect
-                                                 // but it will be guarded by isLoadingState.
-        setCurrentWorkout(loadedState.currentWorkout.map(ex => ({
+        setSelectedDay(loadedState.selectedDay);
+
+        // 1. Deep clone the loaded arrays
+        const clonedCurrentWorkout = JSON.parse(JSON.stringify(loadedState.currentWorkout));
+        const clonedInitialTemplateWorkout = JSON.parse(JSON.stringify(loadedState.initialTemplateWorkout));
+
+        // 2. Map over the cloned arrays to ensure IDs and all fields are consistently initialized
+        const processedCurrentWorkout = clonedCurrentWorkout.map((ex: WorkoutExercise) => ({
           ...ex,
-          sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
-        })));
+          id: ex.id || crypto.randomUUID(),
+          sets: ex.sets.map((s: IndividualSet) => ({
+            id: s.id || crypto.randomUUID(),
+            setNumber: s.setNumber,
+            targetWeight: s.targetWeight || "",
+            targetReps: s.targetReps || undefined,
+            loggedWeight: s.loggedWeight || "",
+            loggedReps: s.loggedReps || "",
+            notes: s.notes || "",
+            isCompleted: s.isCompleted || false,
+          })),
+        }));
+
+        const processedInitialTemplateWorkout = clonedInitialTemplateWorkout.map((ex: WorkoutExercise) => ({
+          ...ex,
+          id: ex.id || crypto.randomUUID(),
+          sets: ex.sets.map((s: IndividualSet) => ({
+            id: s.id || crypto.randomUUID(),
+            setNumber: s.setNumber,
+            targetWeight: s.targetWeight || "",
+            targetReps: s.targetReps || undefined,
+            loggedWeight: s.loggedWeight || "",
+            loggedReps: s.loggedReps || "",
+            notes: s.notes || "",
+            isCompleted: s.isCompleted || false,
+          })),
+        }));
+
+        setCurrentWorkout(processedCurrentWorkout);
         setLoadedTemplateName(loadedState.loadedTemplateName);
-        setInitialTemplateWorkout(loadedState.initialTemplateWorkout.map(ex => ({
-          ...ex,
-          sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
-        })));
-        setJustLoadedState(true); // Set this so the *next* fetchTemplate call (after isLoadingState is false) is skipped.
+        setInitialTemplateWorkout(processedInitialTemplateWorkout);
+        setJustLoadedState(true);
         toast({ title: "State Loaded", description: "Your previous state has been restored." });
       } else {
         toast({ title: "No Saved State", description: "No previously saved state found.", variant: "default" });
@@ -246,4 +289,3 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-

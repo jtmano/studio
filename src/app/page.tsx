@@ -23,14 +23,14 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false); // Initialize to false
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(false);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [workoutHistory, setWorkoutHistory] = useState<WorkoutHistoryItem[]>([]);
   
   const [isSavingState, setIsSavingState] = useState<boolean>(false);
-  const [isLoadingState, setIsLoadingState] = useState<boolean>(false); // Manages the loading state process
-  const [justLoadedState, setJustLoadedState] = useState<boolean>(false); // Flag to prevent template overwrite
+  const [isLoadingState, setIsLoadingState] = useState<boolean>(false); 
+  const [justLoadedState, setJustLoadedState] = useState<boolean>(false); 
   
   const getDefaultExercise = (): WorkoutExercise[] => [{
     id: crypto.randomUUID(),
@@ -64,21 +64,22 @@ export default function FitnessFocusPage() {
           sets: ex.sets.map((s: IndividualSet) => ({
             id: s.id || crypto.randomUUID(),
             setNumber: s.setNumber,
-            targetWeight: s.targetWeight || "",
-            targetReps: s.targetReps || undefined,
-            loggedWeight: s.loggedWeight || "",
-            loggedReps: s.loggedReps || "",
+            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
+            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
+            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && s.loggedReps !== '') ? Number(s.loggedReps) : 
+                        (s.loggedReps === '') ? "" : "",
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
         }));
         setCurrentWorkout(processedExercises);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises))); // Deep clone
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(processedExercises)));
         setLoadedTemplateName(template.name);
         toast({ title: "Template Loaded", description: `${template.name} for Day ${day} loaded.` });
       } else {
         setCurrentWorkout(defaultWorkout);
-        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
         setLoadedTemplateName(undefined);
       }
     } catch (error) {
@@ -86,7 +87,7 @@ export default function FitnessFocusPage() {
       const defaultWorkout = getDefaultExercise();
       toast({ title: "Error Loading Template", description: "Could not load workout template.", variant: "destructive" });
       setCurrentWorkout(defaultWorkout);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
+      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
       setLoadedTemplateName(undefined);
     } finally {
       setIsLoadingTemplate(false);
@@ -95,7 +96,7 @@ export default function FitnessFocusPage() {
 
 
   useEffect(() => {
-    if (isLoadingState) { // Don't fetch template if we are in the process of loading state
+    if (isLoadingState) { 
       return;
     }
     fetchTemplate(selectedDay);
@@ -121,12 +122,12 @@ export default function FitnessFocusPage() {
   
   const handleResetToTemplate = () => {
     if (initialTemplateWorkout.length > 0) {
-      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout))); // Deep clone
+      setCurrentWorkout(JSON.parse(JSON.stringify(initialTemplateWorkout)));
       toast({ title: "Workout Reset", description: "Exercises reset to the loaded template." });
     } else {
        const defaultWorkout = getDefaultExercise();
        setCurrentWorkout(defaultWorkout);
-       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout))); // Deep clone
+       setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
        toast({ title: "Workout Reset", description: "Reset to a blank slate." });
     }
   };
@@ -158,14 +159,26 @@ export default function FitnessFocusPage() {
     const appState: SerializableAppState = {
       selectedWeek,
       selectedDay,
-      currentWorkout: JSON.parse(JSON.stringify(currentWorkout.map(ex => ({ // Deep clone before saving
+      currentWorkout: JSON.parse(JSON.stringify(currentWorkout.map(ex => ({ 
         ...ex,
-        sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
+        sets: ex.sets.map(s => ({
+            ...s, 
+            notes: s.notes || "",
+            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && s.loggedReps !== '') ? Number(s.loggedReps) : 
+                        (s.loggedReps === '') ? "" : "",
+        }))
       })))),
       loadedTemplateName,
-      initialTemplateWorkout: JSON.parse(JSON.stringify(initialTemplateWorkout.map(ex => ({ // Deep clone
+      initialTemplateWorkout: JSON.parse(JSON.stringify(initialTemplateWorkout.map(ex => ({ 
         ...ex,
-        sets: ex.sets.map(s => ({...s, notes: s.notes || ""}))
+        sets: ex.sets.map(s => ({
+            ...s, 
+            notes: s.notes || "",
+            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && s.loggedReps !== '') ? Number(s.loggedReps) : 
+                        (s.loggedReps === '') ? "" : "",
+        }))
       })))),
     };
     try {
@@ -187,21 +200,19 @@ export default function FitnessFocusPage() {
         setSelectedWeek(loadedState.selectedWeek);
         setSelectedDay(loadedState.selectedDay);
 
-        // 1. Deep clone the loaded arrays
         const clonedCurrentWorkout = JSON.parse(JSON.stringify(loadedState.currentWorkout));
         const clonedInitialTemplateWorkout = JSON.parse(JSON.stringify(loadedState.initialTemplateWorkout));
 
-        // 2. Map over the cloned arrays to ensure IDs and all fields are consistently initialized
         const processedCurrentWorkout = clonedCurrentWorkout.map((ex: WorkoutExercise) => ({
           ...ex,
           id: ex.id || crypto.randomUUID(),
           sets: ex.sets.map((s: IndividualSet) => ({
+            ...s,
             id: s.id || crypto.randomUUID(),
-            setNumber: s.setNumber,
-            targetWeight: s.targetWeight || "",
-            targetReps: s.targetReps || undefined,
-            loggedWeight: s.loggedWeight || "",
-            loggedReps: s.loggedReps || "",
+            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
+            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
+            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : "",
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
@@ -211,12 +222,12 @@ export default function FitnessFocusPage() {
           ...ex,
           id: ex.id || crypto.randomUUID(),
           sets: ex.sets.map((s: IndividualSet) => ({
+            ...s,
             id: s.id || crypto.randomUUID(),
-            setNumber: s.setNumber,
-            targetWeight: s.targetWeight || "",
-            targetReps: s.targetReps || undefined,
-            loggedWeight: s.loggedWeight || "",
-            loggedReps: s.loggedReps || "",
+            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
+            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
+            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+            loggedReps: (s.loggedReps !== undefined && s.loggedReps !== null && String(s.loggedReps).trim() !== '') ? Number(s.loggedReps) : "",
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
@@ -289,3 +300,4 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
+

@@ -24,10 +24,10 @@ export default function FitnessFocusPage() {
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
 
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true); // Start true for initial load
+  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true);
   const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
-  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true); // Start true for initial load
-  const [workoutHistory, setWorkoutHistory] = useState<LoggedSetDatabaseEntry[]>([]); // Now stores flat LoggedSetDatabaseEntry[]
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
+  const [workoutHistory, setWorkoutHistory] = useState<LoggedSetDatabaseEntry[]>([]);
   
   const [isSavingState, setIsSavingState] = useState<boolean>(false);
   const [isLoadingWeekDay, setIsLoadingWeekDay] = useState<boolean>(false);
@@ -55,13 +55,13 @@ export default function FitnessFocusPage() {
   const fetchTemplateForDay = useCallback(async (day: number) => {
     setIsLoadingTemplate(true);
     toast({ title: "Loading Template...", description: `Fetching structure for Day ${day}.` });
+
     try {
-      const template = await loadWorkoutTemplate(day);
+      const template = await loadWorkoutTemplate(day); // From Supabase "Templates" table
       let exercisesToSet: WorkoutExercise[];
       let templateNameToSet: string;
 
       if (template && template.exercises) {
-        // Ensure template exercises have necessary fields
         exercisesToSet = template.exercises.map((ex: WorkoutExercise) => ({
           ...ex,
           id: ex.id || crypto.randomUUID(),
@@ -72,8 +72,8 @@ export default function FitnessFocusPage() {
             id: s.id || crypto.randomUUID(),
             targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
             targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-            loggedWeight: "", // Start blank, will be populated from history if available
-            loggedReps: "",   // Start blank
+            loggedWeight: "", // Start blank, will be populated
+            loggedReps: "",   // Start blank, will be populated
             notes: s.notes || "",
             isCompleted: s.isCompleted || false,
           })),
@@ -86,12 +86,9 @@ export default function FitnessFocusPage() {
         toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}. Populating from history...`, variant: "default" });
       }
 
-      // Populate from workoutHistory (flat list of LoggedSetDatabaseEntry)
       if (workoutHistory && workoutHistory.length > 0) {
         const populatedExercises = exercisesToSet.map(templateExercise => {
           const newSets = templateExercise.sets.map(templateSet => {
-            // Find the most recent history entry for this specific exercise and set number
-            // workoutHistory is sorted by id DESC (most recent first) in getWorkoutHistory
             const matchingHistoryEntry = workoutHistory.find(
               histEntry => 
                 histEntry.Exercise === templateExercise.name &&
@@ -103,10 +100,10 @@ export default function FitnessFocusPage() {
               return {
                 ...templateSet,
                 loggedWeight: (matchingHistoryEntry.Weight !== undefined && matchingHistoryEntry.Weight !== null) ? String(matchingHistoryEntry.Weight) : "",
-                loggedReps: (matchingHistoryEntry.Reps !== undefined && matchingHistoryEntry.Reps !== null) ? Number(matchingHistoryEntry.Reps) : "",
+                loggedReps: (matchingHistoryEntry.Reps !== undefined && matchingHistoryEntry.Reps !== null && String(matchingHistoryEntry.Reps).trim() !== '') ? Number(String(matchingHistoryEntry.Reps).trim()) : "",
               };
             }
-            return templateSet; // No matching logged set, keep template set as is (blank loggedWeight/Reps)
+            return templateSet;
           });
           return { ...templateExercise, sets: newSets };
         });
@@ -114,7 +111,7 @@ export default function FitnessFocusPage() {
       }
 
       setCurrentWorkout(exercisesToSet);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(exercisesToSet))); // Deep copy
+      setInitialTemplateWorkout(JSON.parse(JSON.stringify(exercisesToSet)));
       setLoadedTemplateName(templateNameToSet);
 
     } catch (error) {
@@ -130,9 +127,12 @@ export default function FitnessFocusPage() {
   }, [
     getDefaultExercise, 
     toast, 
-    workoutHistory // workoutHistory is now a dependency
+    workoutHistory,
+    setIsLoadingTemplate,
+    setCurrentWorkout,
+    setInitialTemplateWorkout,
+    setLoadedTemplateName
   ]);
-
 
   useEffect(() => {
     if (isLoadingWeekDay || isPopulatingWorkout) {
@@ -140,10 +140,8 @@ export default function FitnessFocusPage() {
     }
     if (justLoadedStateRef.current) {
       justLoadedStateRef.current = false; 
-      // console.log("Just loaded state, skipping template fetch for now.");
       return;
     }
-    // console.log(`Effect for selectedDay ${selectedDay} triggered. Calling fetchTemplateForDay.`);
     fetchTemplateForDay(selectedDay);
   }, [selectedDay, fetchTemplateForDay, isLoadingWeekDay, isPopulatingWorkout]);
 
@@ -151,7 +149,7 @@ export default function FitnessFocusPage() {
   const fetchHistory = useCallback(async () => {
     setIsLoadingHistory(true);
     try {
-      const historyData = await getWorkoutHistory(); // Returns LoggedSetDatabaseEntry[]
+      const historyData = await getWorkoutHistory(); 
       setWorkoutHistory(historyData);
     } catch (error) {
       console.error("Failed to load history:", error);
@@ -159,7 +157,7 @@ export default function FitnessFocusPage() {
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [toast]); 
+  }, [toast, setIsLoadingHistory, setWorkoutHistory]); 
 
   useEffect(() => {
      fetchHistory();
@@ -191,7 +189,7 @@ export default function FitnessFocusPage() {
       const result = await logWorkout(selectedWeek, selectedDay, currentWorkout);
       if (result.success) {
         toast({ title: "Workout Logged!", description: `${result.loggedSetsCount} sets for Week ${selectedWeek}, Day ${selectedDay} saved.` });
-        fetchHistory(); // Refresh history
+        fetchHistory(); 
       } else {
         toast({ title: "Logging Partially Failed", description: result.error || "Could not save your workout completely.", variant: "destructive" });
       }
@@ -259,13 +257,12 @@ export default function FitnessFocusPage() {
 
   const handleLoadWeekAndDay = useCallback(async () => {
     setIsLoadingWeekDay(true);
-    justLoadedStateRef.current = false; // Allow template to load for the new day
+    justLoadedStateRef.current = false; 
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState) {
         setSelectedWeek(loadedState.selectedWeek);
         setSelectedDay(loadedState.selectedDay); 
-        // Template for the new day will be fetched by the useEffect watching selectedDay
         toast({ title: "Week & Day Loaded", description: `Switched to Week ${loadedState.selectedWeek}, Day ${loadedState.selectedDay}. Template loading...` });
       } else {
         toast({ title: "No Saved State", description: "No saved state found to load week/day from.", variant: "default" });
@@ -276,11 +273,11 @@ export default function FitnessFocusPage() {
     } finally {
       setIsLoadingWeekDay(false);
     }
-  }, [toast]);
+  }, [toast, setSelectedWeek, setSelectedDay]);
 
   const handlePopulateLoggedInfo = useCallback(async () => {
     setIsPopulatingWorkout(true);
-    justLoadedStateRef.current = true; // Prevent template fetch from overwriting this
+    justLoadedStateRef.current = true; 
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState && loadedState.currentWorkout) {
@@ -323,7 +320,7 @@ export default function FitnessFocusPage() {
         
         setCurrentWorkout(processedCurrentWorkout);
         setInitialTemplateWorkout(processedInitialTemplateWorkout);
-        setLoadedTemplateName(loadedState.loadedTemplateName); // Use template name from saved state
+        setLoadedTemplateName(loadedState.loadedTemplateName);
         toast({ title: "Workout Info Populated", description: "Logged data applied to the current day." });
       } else {
         toast({ title: "No Workout Data", description: "No saved workout data found to populate.", variant: "default" });
@@ -336,7 +333,7 @@ export default function FitnessFocusPage() {
     } finally {
       setIsPopulatingWorkout(false);
     }
-  }, [toast]);
+  }, [toast, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
 
   return (
     <div className="min-h-screen flex flex-col bg-secondary/20">
@@ -365,7 +362,7 @@ export default function FitnessFocusPage() {
               onLoadWeekAndDay={handleLoadWeekAndDay}
               onPopulateLoggedInfo={handlePopulateLoggedInfo}
               onResetTemplate={handleResetToTemplate}
-              isLoading={isLoadingTemplate || isLoadingHistory} // Combine template and history loading
+              isLoading={isLoadingTemplate || isLoadingHistory}
               isLogging={isLoggingWorkout}
               isSavingState={isSavingState} 
               isLoadingWeekDay={isLoadingWeekDay}
@@ -376,7 +373,6 @@ export default function FitnessFocusPage() {
           </TabsContent>
 
           <TabsContent value="progress">
-            {/* ProgressDisplay might need adjustment if workoutHistory structure for display changes */}
             <ProgressDisplay historyFlat={workoutHistory} isLoading={isLoadingHistory} />
           </TabsContent>
 

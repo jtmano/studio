@@ -1,22 +1,18 @@
 
 // @ts-nocheck
 "use server";
-import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutExercise, IndividualSet, LoggedSetInfo, Exercise as AISuggestionExerciseType, SerializableAppState } from "@/types/fitness";
+import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutExercise, IndividualSet, LoggedSetInfo, Exercise as AISuggestionExerciseType, SerializableAppState, LoggedSetDatabaseEntry } from "@/types/fitness";
 import { suggestExercise as performAiExerciseSuggestion } from "@/ai/flows/suggest-exercise";
 import type { SuggestExerciseInput, SuggestExerciseOutput } from "@/ai/flows/suggest-exercise";
 import { supabase } from "./supabaseClient";
 
-// Mock database for history is no longer used for primary storage.
-// let mockWorkoutHistory: WorkoutHistoryItem[] = [];
-// let nextHistoryId = 1; // No longer needed for mock data
-
 export async function loadWorkoutTemplate(dayIdentifier: number): Promise<WorkoutTemplate | null> {
-  console.log(`Loading template for day: ${dayIdentifier} from Supabase`);
-  await new Promise(resolve => setTimeout(resolve, 250)); // Simulate network delay
+  console.log(`Loading template for day: ${dayIdentifier} from Supabase "Templates" table`);
+  await new Promise(resolve => setTimeout(resolve, 250)); 
 
   const { data: templateRows, error } = await supabase
     .from('Templates')
-    .select('Exercise, Tool')
+    .select('Exercise, Tool, "Target Group"') // Assuming "Target Group" is the column name
     .eq('Day', dayIdentifier);
 
   if (error) {
@@ -31,9 +27,10 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
   const exercisesMap = new Map<string, WorkoutExercise>();
 
-  templateRows.forEach((row, index) => {
+  templateRows.forEach((row) => {
     const exerciseName = row.Exercise;
     const toolName = row.Tool;
+    const targetGroup = row["Target Group"];
     const exerciseKey = `${exerciseName}-${toolName || 'notool'}`;
 
     if (!exercisesMap.has(exerciseKey)) {
@@ -41,6 +38,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
         id: crypto.randomUUID(),
         name: exerciseName,
         tool: toolName,
+        targetMuscleGroup: targetGroup,
         sets: [],
       });
     }
@@ -49,10 +47,10 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
     currentExercise.sets.push({
       id: crypto.randomUUID(),
       setNumber: currentExercise.sets.length + 1,
-      targetWeight: "",
+      targetWeight: "", // Template doesn't store target weight/reps per set
       targetReps: undefined,
-      loggedWeight: "",
-      loggedReps: "",
+      loggedWeight: "",   // Will be populated from history if available
+      loggedReps: "",     // Will be populated from history if available
       isCompleted: false,
       notes: "",
     });
@@ -60,105 +58,95 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
   return {
     id: `supabase-day-${dayIdentifier}-${crypto.randomUUID()}`,
-    name: `Day ${dayIdentifier} Workout`,
+    name: `Day ${dayIdentifier} Workout`, // You can customize this name
     dayIdentifier: dayIdentifier,
     exercises: Array.from(exercisesMap.values()),
   };
 }
 
-export async function logWorkout(week: number, day: number, currentWorkoutExercises: WorkoutExercise[]): Promise<WorkoutHistoryItem> {
-  console.log(`Logging workout for Week ${week}, Day ${day} to Supabase`);
-  await new Promise(resolve => setTimeout(resolve, 100)); // Shorter delay as DB is real
+export async function logWorkout(week: number, day: number, currentWorkoutExercises: WorkoutExercise[]): Promise<{ success: boolean; loggedSetsCount: number; error?: string }> {
+  console.log(`Logging workout for Week ${week}, Day ${day} to Supabase "Workout History" table`);
+  let loggedSetsCount = 0;
+  const setsToInsert = [];
 
-  const loggedSets: LoggedSetInfo[] = [];
-  currentWorkoutExercises.forEach(exercise => {
-    exercise.sets.forEach(set => {
+  for (const exercise of currentWorkoutExercises) {
+    for (const set of exercise.sets) {
       if (set.isCompleted) {
-        loggedSets.push({
-          exerciseName: exercise.name,
-          tool: exercise.tool,
-          setNumber: set.setNumber,
-          weight: set.loggedWeight,
-          reps: set.loggedReps,
-          notes: set.notes,
-        });
-      }
-    });
-  });
+        const weightAsNumber = Number(String(set.loggedWeight).trim());
+        const repsAsNumber = Number(String(set.loggedReps).trim());
 
-  if (loggedSets.length === 0) {
-    throw new Error("No sets were marked as completed. Workout not logged.");
+        setsToInsert.push({
+          Week: week,
+          Day: day,
+          "Target Group": exercise.targetMuscleGroup || null,
+          Exercise: exercise.name,
+          Weight: isNaN(weightAsNumber) ? null : weightAsNumber,
+          Reps: isNaN(repsAsNumber) ? null : repsAsNumber,
+          Completed: true,
+          Tool: exercise.tool || null,
+          "Set Number": set.setNumber,
+        });
+        loggedSetsCount++;
+      }
+    }
   }
 
-  const newEntryId = crypto.randomUUID();
-  const newWorkoutDate = new Date().toISOString();
+  if (loggedSetsCount === 0) {
+    // console.warn("No sets were marked as completed. Workout not logged.");
+    // throw new Error("No sets were marked as completed. Workout not logged.");
+    // Instead of throwing, let's return a status. The UI can decide how to handle this.
+     return { success: false, loggedSetsCount: 0, error: "No sets were marked as completed." };
+  }
 
-  // Data to insert into Supabase "Workout History" table
-  const historyEntryToSave = {
-    id: newEntryId,
-    date: newWorkoutDate,
-    week: week,
-    day: day,
-    // workout_name: `Workout Week ${week}, Day ${day}`, // Optional: if you want to save a name
-    logged_sets: loggedSets, // This will be stored in a JSONB column
-  };
-
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('Workout History')
-    .insert([historyEntryToSave])
-    .select()
-    .single(); // Assuming insert returns the inserted row
+    .insert(setsToInsert);
 
   if (error) {
-    console.error("Failed to log workout to Supabase:", error);
-    throw new Error(`Could not save your workout to Supabase: ${error.message}`);
+    console.error("Failed to log workout sets to Supabase:", error);
+    // throw new Error(`Could not save your workout to Supabase "Workout History": ${error.message}`);
+    return { success: false, loggedSetsCount: 0, error: `Supabase error: ${error.message}` };
   }
 
-  console.log("Workout logged to Supabase:", data);
-  
-  // Construct the WorkoutHistoryItem to return, mapping Supabase columns to type keys
-  const loggedItem: WorkoutHistoryItem = {
-    id: data.id,
-    date: data.date,
-    week: data.week,
-    day: data.day,
-    workoutName: data.workout_name, // if you have workout_name column
-    loggedSets: data.logged_sets as LoggedSetInfo[],
-  };
-
-  return loggedItem;
+  console.log(`${loggedSetsCount} sets logged to Supabase "Workout History".`);
+  return { success: true, loggedSetsCount };
 }
 
 
-export async function getWorkoutHistory(): Promise<WorkoutHistoryItem[]> {
-  console.log("Fetching workout history from Supabase");
-  await new Promise(resolve => setTimeout(resolve, 100)); // Shorter delay
+export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
+  console.log("Fetching workout history from Supabase \"Workout History\" table");
+  await new Promise(resolve => setTimeout(resolve, 100));
 
   const { data, error } = await supabase
     .from('Workout History')
-    .select('*') // Select all columns
-    .order('date', { ascending: false }); // Get most recent first
+    .select('*')
+    .order('id', { ascending: false }); // Get most recent entries first (assuming id is auto-incrementing PK)
 
   if (error) {
     console.error("Error fetching workout history from Supabase:", error);
-    return []; // Return empty array on error or throw
+    return [];
   }
 
   if (!data) {
     return [];
   }
 
-  // Map Supabase rows to WorkoutHistoryItem type
-  const historyItems: WorkoutHistoryItem[] = data.map((item: any) => ({
+  // Map Supabase rows to LoggedSetDatabaseEntry type
+  // The column names in Supabase use spaces, so access them with bracket notation.
+  const historyEntries: LoggedSetDatabaseEntry[] = data.map((item: any) => ({
     id: item.id,
-    date: item.date, // Supabase typically returns ISO string for timestamptz
-    week: item.week,
-    day: item.day,
-    workoutName: item.workout_name, // Map workout_name from DB to workoutName
-    loggedSets: item.logged_sets as LoggedSetInfo[], // Cast JSONB data
+    Week: item.Week,
+    Day: item.Day,
+    TargetGroup: item["Target Group"],
+    Exercise: item.Exercise,
+    Weight: item.Weight,
+    Reps: item.Reps,
+    Completed: item.Completed,
+    Tool: item.Tool,
+    SetNumber: item["Set Number"],
   }));
 
-  return historyItems;
+  return historyEntries;
 }
 
 // Function to save the current app state to Supabase
@@ -168,7 +156,7 @@ export async function saveCurrentAppState(appState: SerializableAppState): Promi
 
   const { data, error } = await supabase
     .from('Current State')
-    .upsert({ id: 1, state_data: appState, updated_at: new Date().toISOString() })
+    .upsert({ id: 1, state_data: appState, updated_at: new Date().toISOString() }, { onConflict: 'id' })
     .select();
 
   if (error) {
@@ -196,8 +184,7 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
 
   if (data && data.state_data) {
     console.log("App state loaded successfully from Supabase:", data.state_data);
-    // Ensure the loaded state structure matches SerializableAppState
-    const loadedState = data.state_data as any; // Cast to any for flexible checking
+    const loadedState = data.state_data as any; 
     const validatedState: SerializableAppState = {
         selectedWeek: loadedState.selectedWeek || 1,
         selectedDay: loadedState.selectedDay || 1,
@@ -205,6 +192,7 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
             ...ex,
             id: ex.id || crypto.randomUUID(),
             tool: ex.tool || "",
+            targetMuscleGroup: ex.targetMuscleGroup || "",
             sets: (ex.sets || []).map((s: any) => ({
                 ...s,
                 id: s.id || crypto.randomUUID(),
@@ -221,6 +209,7 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
              ...ex,
             id: ex.id || crypto.randomUUID(),
             tool: ex.tool || "",
+            targetMuscleGroup: ex.targetMuscleGroup || "",
             sets: (ex.sets || []).map((s: any) => ({
                 ...s,
                 id: s.id || crypto.randomUUID(),

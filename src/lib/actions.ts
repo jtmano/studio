@@ -6,9 +6,9 @@ import { suggestExercise as performAiExerciseSuggestion } from "@/ai/flows/sugge
 import type { SuggestExerciseInput, SuggestExerciseOutput } from "@/ai/flows/suggest-exercise";
 import { supabase } from "./supabaseClient";
 
-// Mock database for history
-let mockWorkoutHistory: WorkoutHistoryItem[] = [];
-let nextHistoryId = 1;
+// Mock database for history is no longer used for primary storage.
+// let mockWorkoutHistory: WorkoutHistoryItem[] = [];
+// let nextHistoryId = 1; // No longer needed for mock data
 
 export async function loadWorkoutTemplate(dayIdentifier: number): Promise<WorkoutTemplate | null> {
   console.log(`Loading template for day: ${dayIdentifier} from Supabase`);
@@ -16,7 +16,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
   const { data: templateRows, error } = await supabase
     .from('Templates')
-    .select('Exercise, Tool') 
+    .select('Exercise, Tool')
     .eq('Day', dayIdentifier);
 
   if (error) {
@@ -38,7 +38,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
     if (!exercisesMap.has(exerciseKey)) {
       exercisesMap.set(exerciseKey, {
-        id: crypto.randomUUID(), 
+        id: crypto.randomUUID(),
         name: exerciseName,
         tool: toolName,
         sets: [],
@@ -47,28 +47,28 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
     const currentExercise = exercisesMap.get(exerciseKey)!;
     currentExercise.sets.push({
-      id: crypto.randomUUID(), 
+      id: crypto.randomUUID(),
       setNumber: currentExercise.sets.length + 1,
-      targetWeight: "", 
-      targetReps: undefined, 
-      loggedWeight: "", 
-      loggedReps: "",   
+      targetWeight: "",
+      targetReps: undefined,
+      loggedWeight: "",
+      loggedReps: "",
       isCompleted: false,
-      notes: "", 
+      notes: "",
     });
   });
 
   return {
     id: `supabase-day-${dayIdentifier}-${crypto.randomUUID()}`,
-    name: `Day ${dayIdentifier} Workout`, 
+    name: `Day ${dayIdentifier} Workout`,
     dayIdentifier: dayIdentifier,
     exercises: Array.from(exercisesMap.values()),
   };
 }
 
 export async function logWorkout(week: number, day: number, currentWorkoutExercises: WorkoutExercise[]): Promise<WorkoutHistoryItem> {
-  console.log(`Logging workout for Week ${week}, Day ${day}`);
-  await new Promise(resolve => setTimeout(resolve, 500)); 
+  console.log(`Logging workout for Week ${week}, Day ${day} to Supabase`);
+  await new Promise(resolve => setTimeout(resolve, 100)); // Shorter delay as DB is real
 
   const loggedSets: LoggedSetInfo[] = [];
   currentWorkoutExercises.forEach(exercise => {
@@ -78,8 +78,8 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
           exerciseName: exercise.name,
           tool: exercise.tool,
           setNumber: set.setNumber,
-          weight: set.loggedWeight, 
-          reps: set.loggedReps,     
+          weight: set.loggedWeight,
+          reps: set.loggedReps,
           notes: set.notes,
         });
       }
@@ -90,34 +90,86 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
     throw new Error("No sets were marked as completed. Workout not logged.");
   }
 
-  const newEntry: WorkoutHistoryItem = {
-    id: `hist${nextHistoryId++}`,
-    date: new Date().toISOString(),
-    week,
-    day,
-    loggedSets,
+  const newEntryId = crypto.randomUUID();
+  const newWorkoutDate = new Date().toISOString();
+
+  // Data to insert into Supabase "Workout History" table
+  const historyEntryToSave = {
+    id: newEntryId,
+    date: newWorkoutDate,
+    week: week,
+    day: day,
+    // workout_name: `Workout Week ${week}, Day ${day}`, // Optional: if you want to save a name
+    logged_sets: loggedSets, // This will be stored in a JSONB column
   };
-  mockWorkoutHistory.unshift(newEntry);
-  console.log("Workout logged:", newEntry);
-  return newEntry;
+
+  const { data, error } = await supabase
+    .from('Workout History')
+    .insert([historyEntryToSave])
+    .select()
+    .single(); // Assuming insert returns the inserted row
+
+  if (error) {
+    console.error("Failed to log workout to Supabase:", error);
+    throw new Error(`Could not save your workout to Supabase: ${error.message}`);
+  }
+
+  console.log("Workout logged to Supabase:", data);
+  
+  // Construct the WorkoutHistoryItem to return, mapping Supabase columns to type keys
+  const loggedItem: WorkoutHistoryItem = {
+    id: data.id,
+    date: data.date,
+    week: data.week,
+    day: data.day,
+    workoutName: data.workout_name, // if you have workout_name column
+    loggedSets: data.logged_sets as LoggedSetInfo[],
+  };
+
+  return loggedItem;
 }
 
 
 export async function getWorkoutHistory(): Promise<WorkoutHistoryItem[]> {
-  console.log("Fetching workout history");
-  await new Promise(resolve => setTimeout(resolve, 500));
-  return JSON.parse(JSON.stringify(mockWorkoutHistory));
+  console.log("Fetching workout history from Supabase");
+  await new Promise(resolve => setTimeout(resolve, 100)); // Shorter delay
+
+  const { data, error } = await supabase
+    .from('Workout History')
+    .select('*') // Select all columns
+    .order('date', { ascending: false }); // Get most recent first
+
+  if (error) {
+    console.error("Error fetching workout history from Supabase:", error);
+    return []; // Return empty array on error or throw
+  }
+
+  if (!data) {
+    return [];
+  }
+
+  // Map Supabase rows to WorkoutHistoryItem type
+  const historyItems: WorkoutHistoryItem[] = data.map((item: any) => ({
+    id: item.id,
+    date: item.date, // Supabase typically returns ISO string for timestamptz
+    week: item.week,
+    day: item.day,
+    workoutName: item.workout_name, // Map workout_name from DB to workoutName
+    loggedSets: item.logged_sets as LoggedSetInfo[], // Cast JSONB data
+  }));
+
+  return historyItems;
 }
 
 // Function to save the current app state to Supabase
 export async function saveCurrentAppState(appState: SerializableAppState): Promise<void> {
   console.log("Saving current app state to Supabase with ID 1:", appState);
-  await new Promise(resolve => setTimeout(resolve, 300)); 
+  await new Promise(resolve => setTimeout(resolve, 300));
 
   const { data, error } = await supabase
-    .from('Current State') 
-    .upsert({ id: 1, state_data: appState, updated_at: new Date().toISOString() }) 
-    .select(); 
+    .from('Current State')
+    .upsert({ id: 1, state_data: appState, updated_at: new Date().toISOString() })
+    .select();
 
   if (error) {
     console.error("Error saving app state to Supabase:", error);
@@ -129,22 +181,59 @@ export async function saveCurrentAppState(appState: SerializableAppState): Promi
 // Function to load the current app state from Supabase
 export async function loadCurrentAppState(): Promise<SerializableAppState | null> {
   console.log("Loading current app state from Supabase with ID 1");
-  await new Promise(resolve => setTimeout(resolve, 300)); 
+  await new Promise(resolve => setTimeout(resolve, 300));
 
   const { data, error } = await supabase
-    .from('Current State') 
+    .from('Current State')
     .select('state_data')
     .eq('id', 1)
-    .maybeSingle(); 
+    .maybeSingle();
 
   if (error) {
     console.error("Error loading app state from Supabase:", error);
-    return null; 
+    return null;
   }
 
   if (data && data.state_data) {
     console.log("App state loaded successfully from Supabase:", data.state_data);
-    return data.state_data as SerializableAppState; 
+    // Ensure the loaded state structure matches SerializableAppState
+    const loadedState = data.state_data as any; // Cast to any for flexible checking
+    const validatedState: SerializableAppState = {
+        selectedWeek: loadedState.selectedWeek || 1,
+        selectedDay: loadedState.selectedDay || 1,
+        currentWorkout: (loadedState.currentWorkout || []).map((ex: any) => ({
+            ...ex,
+            id: ex.id || crypto.randomUUID(),
+            tool: ex.tool || "",
+            sets: (ex.sets || []).map((s: any) => ({
+                ...s,
+                id: s.id || crypto.randomUUID(),
+                notes: s.notes || "",
+                targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
+                targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
+                loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+                loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
+                isCompleted: s.isCompleted || false,
+            }))
+        })),
+        loadedTemplateName: loadedState.loadedTemplateName || undefined,
+        initialTemplateWorkout: (loadedState.initialTemplateWorkout || []).map((ex: any) => ({
+             ...ex,
+            id: ex.id || crypto.randomUUID(),
+            tool: ex.tool || "",
+            sets: (ex.sets || []).map((s: any) => ({
+                ...s,
+                id: s.id || crypto.randomUUID(),
+                notes: s.notes || "",
+                targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
+                targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
+                loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
+                loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
+                isCompleted: s.isCompleted || false,
+            }))
+        })),
+    };
+    return validatedState;
   } else {
     console.log("No saved app state found in Supabase.");
     return null;
@@ -162,3 +251,4 @@ export async function suggestExercise(input: SuggestExerciseInput): Promise<Sugg
     throw new Error("Failed to get exercise suggestion from AI.");
   }
 }
+    

@@ -1,27 +1,28 @@
 
 // @ts-nocheck
 "use server";
-import type { WorkoutTemplate, WorkoutHistoryItem, WorkoutExercise, IndividualSet, LoggedSetInfo, Exercise as AISuggestionExerciseType, SerializableAppState, LoggedSetDatabaseEntry } from "@/types/fitness";
+import type { WorkoutTemplate, WorkoutExercise, IndividualSet, LoggedSetInfo, SerializableAppState, LoggedSetDatabaseEntry } from "@/types/fitness";
 import { suggestExercise as performAiExerciseSuggestion } from "@/ai/flows/suggest-exercise";
 import type { SuggestExerciseInput, SuggestExerciseOutput } from "@/ai/flows/suggest-exercise";
 import { supabase } from "./supabaseClient";
 
 export async function loadWorkoutTemplate(dayIdentifier: number): Promise<WorkoutTemplate | null> {
   console.log(`Loading template for day: ${dayIdentifier} from Supabase "Templates" table`);
-  await new Promise(resolve => setTimeout(resolve, 250)); 
 
   const { data: templateRows, error } = await supabase
     .from('Templates')
-    .select('Exercise, Tool, "Target Group"') // Assuming "Target Group" is the column name
-    .eq('Day', dayIdentifier);
+    .select('Exercise, Tool, "Target Group"') // Columns to select
+    .eq('Day', dayIdentifier); // Filter by day
 
   if (error) {
     console.error("Error fetching template from Supabase:", error);
+    // A 400 error from Supabase will be caught here.
+    // Details of the error object are crucial for debugging (e.g., error.message, error.details, error.hint)
     return null;
   }
 
   if (!templateRows || templateRows.length === 0) {
-    console.log(`No template found for day ${dayIdentifier} in Supabase.`);
+    console.log(`No template found for day ${dayIdentifier} in Supabase "Templates" table.`);
     return null;
   }
 
@@ -29,16 +30,18 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
   templateRows.forEach((row) => {
     const exerciseName = row.Exercise;
-    const toolName = row.Tool;
-    const targetGroup = row["Target Group"];
+    const toolName = row.Tool; // Might be null
+    const targetGroup = row["Target Group"]; // Might be null
+
+    // Use a consistent key for the map, handling null tools
     const exerciseKey = `${exerciseName}-${toolName || 'notool'}`;
 
     if (!exercisesMap.has(exerciseKey)) {
       exercisesMap.set(exerciseKey, {
         id: crypto.randomUUID(),
         name: exerciseName,
-        tool: toolName,
-        targetMuscleGroup: targetGroup,
+        tool: toolName || "", // Ensure tool is always a string
+        targetMuscleGroup: targetGroup || "", // Ensure targetMuscleGroup is always a string
         sets: [],
       });
     }
@@ -47,10 +50,10 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
     currentExercise.sets.push({
       id: crypto.randomUUID(),
       setNumber: currentExercise.sets.length + 1,
-      targetWeight: "", // Template doesn't store target weight/reps per set
+      targetWeight: "", // Templates don't store target weight/reps per set
       targetReps: undefined,
-      loggedWeight: "",   // Will be populated from history if available
-      loggedReps: "",     // Will be populated from history if available
+      loggedWeight: "",   // Will be populated from history in page.tsx
+      loggedReps: "",     // Will be populated from history in page.tsx
       isCompleted: false,
       notes: "",
     });
@@ -58,7 +61,7 @@ export async function loadWorkoutTemplate(dayIdentifier: number): Promise<Workou
 
   return {
     id: `supabase-day-${dayIdentifier}-${crypto.randomUUID()}`,
-    name: `Day ${dayIdentifier} Workout`, // You can customize this name
+    name: `Day ${dayIdentifier} Workout`,
     dayIdentifier: dayIdentifier,
     exercises: Array.from(exercisesMap.values()),
   };
@@ -72,6 +75,7 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
   for (const exercise of currentWorkoutExercises) {
     for (const set of exercise.sets) {
       if (set.isCompleted) {
+        // Ensure weight and reps are numbers, or null if not parseable
         const weightAsNumber = Number(String(set.loggedWeight).trim());
         const repsAsNumber = Number(String(set.loggedReps).trim());
 
@@ -84,7 +88,7 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
           Reps: isNaN(repsAsNumber) ? null : repsAsNumber,
           Completed: true,
           Tool: exercise.tool || null,
-          "Set Number": set.setNumber,
+          SetNumber: set.setNumber, // Assumes "SetNumber" column exists
         });
         loggedSetsCount++;
       }
@@ -92,19 +96,15 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
   }
 
   if (loggedSetsCount === 0) {
-    // console.warn("No sets were marked as completed. Workout not logged.");
-    // throw new Error("No sets were marked as completed. Workout not logged.");
-    // Instead of throwing, let's return a status. The UI can decide how to handle this.
-     return { success: false, loggedSetsCount: 0, error: "No sets were marked as completed." };
+     return { success: true, loggedSetsCount: 0, error: "No completed sets to log." }; // Changed to success: true for no-op
   }
 
   const { error } = await supabase
-    .from('Workout History')
+    .from('Workout History') // Target your "Workout History" table
     .insert(setsToInsert);
 
   if (error) {
-    console.error("Failed to log workout sets to Supabase:", error);
-    // throw new Error(`Could not save your workout to Supabase "Workout History": ${error.message}`);
+    console.error("Failed to log workout sets to Supabase \"Workout History\":", error);
     return { success: false, loggedSetsCount: 0, error: `Supabase error: ${error.message}` };
   }
 
@@ -115,12 +115,11 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
 
 export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
   console.log("Fetching workout history from Supabase \"Workout History\" table");
-  await new Promise(resolve => setTimeout(resolve, 100));
 
   const { data, error } = await supabase
     .from('Workout History')
     .select('*')
-    .order('id', { ascending: false }); // Get most recent entries first (assuming id is auto-incrementing PK)
+    .order('id', { ascending: false }); // Get most recent entries first
 
   if (error) {
     console.error("Error fetching workout history from Supabase:", error);
@@ -131,8 +130,6 @@ export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
     return [];
   }
 
-  // Map Supabase rows to LoggedSetDatabaseEntry type
-  // The column names in Supabase use spaces, so access them with bracket notation.
   const historyEntries: LoggedSetDatabaseEntry[] = data.map((item: any) => ({
     id: item.id,
     Week: item.Week,
@@ -143,16 +140,14 @@ export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
     Reps: item.Reps,
     Completed: item.Completed,
     Tool: item.Tool,
-    SetNumber: item["Set Number"],
+    SetNumber: item["SetNumber"], // Assumes "SetNumber" column exists
   }));
 
   return historyEntries;
 }
 
-// Function to save the current app state to Supabase
 export async function saveCurrentAppState(appState: SerializableAppState): Promise<void> {
   console.log("Saving current app state to Supabase with ID 1:", appState);
-  await new Promise(resolve => setTimeout(resolve, 300));
 
   const { data, error } = await supabase
     .from('Current State')
@@ -166,10 +161,8 @@ export async function saveCurrentAppState(appState: SerializableAppState): Promi
   console.log("App state saved successfully to Supabase:", data);
 }
 
-// Function to load the current app state from Supabase
 export async function loadCurrentAppState(): Promise<SerializableAppState | null> {
   console.log("Loading current app state from Supabase with ID 1");
-  await new Promise(resolve => setTimeout(resolve, 300));
 
   const { data, error } = await supabase
     .from('Current State')
@@ -184,7 +177,8 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
 
   if (data && data.state_data) {
     console.log("App state loaded successfully from Supabase:", data.state_data);
-    const loadedState = data.state_data as any; 
+    // Basic validation/transformation can be done here if needed
+    const loadedState = data.state_data as any;
     const validatedState: SerializableAppState = {
         selectedWeek: loadedState.selectedWeek || 1,
         selectedDay: loadedState.selectedDay || 1,
@@ -196,11 +190,11 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
             sets: (ex.sets || []).map((s: any) => ({
                 ...s,
                 id: s.id || crypto.randomUUID(),
-                notes: s.notes || "",
                 targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
                 targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
                 loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
                 loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
+                notes: s.notes || "",
                 isCompleted: s.isCompleted || false,
             }))
         })),
@@ -213,11 +207,11 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
             sets: (ex.sets || []).map((s: any) => ({
                 ...s,
                 id: s.id || crypto.randomUUID(),
-                notes: s.notes || "",
                 targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
                 targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
                 loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
                 loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
+                notes: s.notes || "",
                 isCompleted: s.isCompleted || false,
             }))
         })),
@@ -240,4 +234,3 @@ export async function suggestExercise(input: SuggestExerciseInput): Promise<Sugg
     throw new Error("Failed to get exercise suggestion from AI.");
   }
 }
-    

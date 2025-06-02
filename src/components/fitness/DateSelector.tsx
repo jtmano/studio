@@ -1,9 +1,11 @@
+
 "use client";
 
 import type { Dispatch, SetStateAction } from 'react';
 import { CalendarDays } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input'; // Added Input
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface DateSelectorProps {
@@ -14,7 +16,7 @@ interface DateSelectorProps {
   isLoadingTemplate: boolean;
 }
 
-const MAX_WEEKS = 52;
+// const MAX_WEEKS = 52; // No longer needed for dropdown
 const DAYS_IN_CYCLE = 5; // As per "Day (1-5)" for templates
 
 export function DateSelector({
@@ -24,8 +26,29 @@ export function DateSelector({
   setSelectedDay,
   isLoadingTemplate,
 }: DateSelectorProps) {
-  const weeks = Array.from({ length: MAX_WEEKS }, (_, i) => i + 1);
+  // const weeks = Array.from({ length: MAX_WEEKS }, (_, i) => i + 1); // No longer needed
   const days = Array.from({ length: DAYS_IN_CYCLE }, (_, i) => i + 1);
+
+  const handleWeekChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    // Allow empty input for user to clear, but default to 1 if blurred empty
+    // Convert to number if not empty, otherwise keep as string for controlled input behavior
+    const numericValue = parseInt(value, 10);
+    if (value === "") {
+        setSelectedWeek(1); // Or handle empty string specifically if needed
+    } else if (!isNaN(numericValue) && numericValue >= 1) {
+        setSelectedWeek(numericValue);
+    } else if (isNaN(numericValue) || numericValue < 1) {
+        setSelectedWeek(1); // Default to 1 if invalid
+    }
+  };
+
+  const handleWeekBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    if (event.target.value === "" || parseInt(event.target.value, 10) < 1) {
+      setSelectedWeek(1); // Default to week 1 if input is empty or invalid on blur
+    }
+  };
+
 
   return (
     <Card className="shadow-md">
@@ -36,23 +59,19 @@ export function DateSelector({
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <Label htmlFor="week-select" className="text-sm font-medium">Week</Label>
-            <Select
-              value={selectedWeek.toString()}
-              onValueChange={(value) => setSelectedWeek(Number(value))}
+            <Label htmlFor="week-input" className="text-sm font-medium">Week</Label>
+            <Input
+              type="number"
+              id="week-input"
+              value={selectedWeek}
+              onChange={handleWeekChange}
+              onBlur={handleWeekBlur}
+              min="1"
               disabled={isLoadingTemplate}
-            >
-              <SelectTrigger id="week-select" aria-label="Select week">
-                <SelectValue placeholder="Select week" />
-              </SelectTrigger>
-              <SelectContent>
-                {weeks.map((week) => (
-                  <SelectItem key={week} value={week.toString()}>
-                    Week {week}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              className="w-full"
+              placeholder="Enter week"
+              aria-label="Select week"
+            />
           </div>
           <div>
             <Label htmlFor="day-select" className="text-sm font-medium">Day</Label>

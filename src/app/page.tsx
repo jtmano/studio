@@ -12,7 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import type { WorkoutExercise, IndividualSet, WorkoutHistoryItem, WorkoutTemplate, SerializableAppState, LoggedSetDatabaseEntry } from '@/types/fitness';
 import { loadWorkoutTemplate, logWorkout, getWorkoutHistory, saveCurrentAppState, loadCurrentAppState } from '@/lib/actions';
+import { processWorkoutForPersistence, processLoadedWorkout } from '@/lib/utils';
 import { Dumbbell, LineChart, Lightbulb } from 'lucide-react';
+
+type LoadingState = 'idle' | 'loading-template' | 'logging' | 'saving-state' | 'loading-history' | 'loading-week-day' | 'populating-workout';
 
 export default function FitnessFocusPage() {
   const { toast } = useToast();
@@ -23,16 +26,10 @@ export default function FitnessFocusPage() {
   const [currentWorkout, setCurrentWorkout] = useState<WorkoutExercise[]>([]);
   const [loadedTemplateName, setLoadedTemplateName] = useState<string | undefined>(undefined);
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
-
-  const [isLoadingTemplate, setIsLoadingTemplate] = useState<boolean>(true);
-  const [isLoggingWorkout, setIsLoggingWorkout] = useState<boolean>(false);
-  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [workoutHistory, setWorkoutHistory] = useState<LoggedSetDatabaseEntry[]>([]);
   
-  const [isSavingState, setIsSavingState] = useState<boolean>(false);
-  const [isLoadingWeekDay, setIsLoadingWeekDay] = useState<boolean>(false);
-  const [isPopulatingWorkout, setIsPopulatingWorkout] = useState<boolean>(false);
-  
+  const [loadingState, setLoadingState] = useState<LoadingState>('loading-history');
+
   const justLoadedStateRef = useRef<boolean>(false); 
   
   const getDefaultExercise = useCallback((): WorkoutExercise[] => [{
@@ -52,31 +49,43 @@ export default function FitnessFocusPage() {
     }],
   }], []);
 
+  const fetchHistory = useCallback(async () => {
+    setLoadingState('loading-history');
+    try {
+      const historyData = await getWorkoutHistory(); 
+      setWorkoutHistory(historyData);
+    } catch (error) {
+      console.error("Failed to load history:", error);
+      toast({ title: "Error Loading History", description: "Could not load workout history.", variant: "destructive" });
+    } finally {
+      setLoadingState('idle');
+    }
+  }, [toast]); 
+
+  useEffect(() => {
+     fetchHistory();
+  }, [fetchHistory]);
+
   const fetchTemplateForDay = useCallback(async (day: number) => {
-    setIsLoadingTemplate(true);
+    setLoadingState('loading-template');
     toast({ title: "Loading Template...", description: `Fetching structure for Day ${day}.` });
 
     try {
-      const template = await loadWorkoutTemplate(day); // From Supabase "Templates" table
+      const template = await loadWorkoutTemplate(day);
       let exercisesToSet: WorkoutExercise[];
       let templateNameToSet: string;
 
       if (template && template.exercises) {
-        exercisesToSet = template.exercises.map((ex: WorkoutExercise) => ({
+        exercisesToSet = template.exercises.map(ex => ({
           ...ex,
           id: ex.id || crypto.randomUUID(),
-          tool: ex.tool || "",
-          targetMuscleGroup: ex.targetMuscleGroup || "",
-          sets: ex.sets.map((s: IndividualSet) => ({
+          sets: ex.sets.map(s => ({
             ...s,
             id: s.id || crypto.randomUUID(),
-            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-            loggedWeight: "", // Start blank, will be populated
-            loggedReps: "",   // Start blank, will be populated
-            notes: s.notes || "",
-            isCompleted: s.isCompleted || false,
-          })),
+            loggedWeight: "",
+            loggedReps: "",
+            isCompleted: false,
+          }))
         }));
         templateNameToSet = template.name;
         toast({ title: "Template Loaded", description: `${template.name}. Populating from history...` });
@@ -87,29 +96,26 @@ export default function FitnessFocusPage() {
       }
 
       if (workoutHistory && workoutHistory.length > 0) {
-        const populatedExercises = exercisesToSet.map(templateExercise => {
-          const newSets = templateExercise.sets.map(templateSet => {
-            const matchingHistoryEntry = workoutHistory.find(
-              histEntry => 
+          const populatedExercises = exercisesToSet.map(templateExercise => {
+            const lastLoggedInstance = workoutHistory.find(
+              histEntry =>
                 histEntry.Exercise === templateExercise.name &&
-                (histEntry.Tool || "") === (templateExercise.tool || "") &&
-                histEntry.SetNumber === templateSet.setNumber
+                (histEntry.Tool || "") === (templateExercise.tool || "")
             );
 
-            if (matchingHistoryEntry) {
-              return {
-                ...templateSet,
-                loggedWeight: (matchingHistoryEntry.Weight !== undefined && matchingHistoryEntry.Weight !== null) ? String(matchingHistoryEntry.Weight) : "",
-                loggedReps: (matchingHistoryEntry.Reps !== undefined && matchingHistoryEntry.Reps !== null && String(matchingHistoryEntry.Reps).trim() !== '') ? Number(String(matchingHistoryEntry.Reps).trim()) : "",
-              };
+            if (lastLoggedInstance) {
+              const newSets = templateExercise.sets.map(templateSet => ({
+                  ...templateSet,
+                  loggedWeight: (lastLoggedInstance.Weight !== undefined && lastLoggedInstance.Weight !== null) ? String(lastLoggedInstance.Weight) : "",
+                  loggedReps: (lastLoggedInstance.Reps !== undefined && lastLoggedInstance.Reps !== null) ? Number(lastLoggedInstance.Reps) : "",
+              }));
+              return { ...templateExercise, sets: newSets };
             }
-            return templateSet;
+            return templateExercise;
           });
-          return { ...templateExercise, sets: newSets };
-        });
-        exercisesToSet = populatedExercises;
+          exercisesToSet = populatedExercises;
       }
-
+      
       setCurrentWorkout(exercisesToSet);
       setInitialTemplateWorkout(JSON.parse(JSON.stringify(exercisesToSet)));
       setLoadedTemplateName(templateNameToSet);
@@ -122,20 +128,21 @@ export default function FitnessFocusPage() {
       setLoadedTemplateName(`Day ${day} (Error Loading)`);
       toast({ title: "Error Loading Workout", description: (error as Error).message || "Could not load workout.", variant: "destructive" });
     } finally {
-      setIsLoadingTemplate(false);
+      setLoadingState('idle');
     }
   }, [
     getDefaultExercise, 
     toast, 
     workoutHistory,
-    setIsLoadingTemplate,
     setCurrentWorkout,
     setInitialTemplateWorkout,
-    setLoadedTemplateName
+    setLoadedTemplateName,
+    setLoadingState,
   ]);
 
   useEffect(() => {
-    if (isLoadingWeekDay || isPopulatingWorkout) {
+    const isAnyLoading = loadingState !== 'idle';
+    if (isAnyLoading) {
       return; 
     }
     if (justLoadedStateRef.current) {
@@ -143,25 +150,9 @@ export default function FitnessFocusPage() {
       return;
     }
     fetchTemplateForDay(selectedDay);
-  }, [selectedDay, fetchTemplateForDay, isLoadingWeekDay, isPopulatingWorkout]);
+  }, [selectedDay, fetchTemplateForDay, loadingState, workoutHistory]);
 
 
-  const fetchHistory = useCallback(async () => {
-    setIsLoadingHistory(true);
-    try {
-      const historyData = await getWorkoutHistory(); 
-      setWorkoutHistory(historyData);
-    } catch (error) {
-      console.error("Failed to load history:", error);
-      toast({ title: "Error Loading History", description: "Could not load workout history.", variant: "destructive" });
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  }, [toast, setIsLoadingHistory, setWorkoutHistory]); 
-
-  useEffect(() => {
-     fetchHistory();
-  }, [fetchHistory]);
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
@@ -184,7 +175,7 @@ export default function FitnessFocusPage() {
       toast({ title: "No Sets Logged", description: "Please mark at least one set as completed to log the workout.", variant: "default" });
       return;
     }
-    setIsLoggingWorkout(true);
+    setLoadingState('logging');
     try {
       const result = await logWorkout(selectedWeek, selectedDay, currentWorkout);
       if (result.success) {
@@ -197,52 +188,18 @@ export default function FitnessFocusPage() {
       console.error("Failed to log workout:", error);
       toast({ title: "Logging Failed", description: (error as Error).message || "Could not save your workout.", variant: "destructive" });
     } finally {
-      setIsLoggingWorkout(false);
+      setLoadingState('idle');
     }
   };
 
   const handleSaveCurrentState = useCallback(async () => {
-    setIsSavingState(true);
-    const currentWorkoutToSave = JSON.parse(JSON.stringify(currentWorkout.map(ex => ({
-      ...ex,
-      id: ex.id || crypto.randomUUID(),
-      tool: ex.tool || "",
-      targetMuscleGroup: ex.targetMuscleGroup || "",
-      sets: ex.sets.map(s => ({
-        ...s,
-        id: s.id || crypto.randomUUID(),
-        notes: s.notes || "",
-        targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-        targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-        loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-        loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
-        isCompleted: s.isCompleted || false,
-      }))
-    }))));
-
-    const initialTemplateWorkoutToSave = JSON.parse(JSON.stringify(initialTemplateWorkout.map(ex => ({
-      ...ex,
-      id: ex.id || crypto.randomUUID(),
-      tool: ex.tool || "",
-      targetMuscleGroup: ex.targetMuscleGroup || "",
-      sets: ex.sets.map(s => ({
-        ...s,
-        id: s.id || crypto.randomUUID(),
-        notes: s.notes || "",
-        targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-        targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-        loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-        loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
-        isCompleted: s.isCompleted || false,
-      }))
-    }))));
-
+    setLoadingState('saving-state');
     const appState: SerializableAppState = {
       selectedWeek,
       selectedDay,
-      currentWorkout: currentWorkoutToSave,
+      currentWorkout: processWorkoutForPersistence(currentWorkout),
       loadedTemplateName,
-      initialTemplateWorkout: initialTemplateWorkoutToSave,
+      initialTemplateWorkout: processWorkoutForPersistence(initialTemplateWorkout),
     };
     try {
       await saveCurrentAppState(appState);
@@ -251,12 +208,12 @@ export default function FitnessFocusPage() {
       console.error("Failed to save app state:", error);
       toast({ title: "Save State Failed", description: "Could not save your current state.", variant: "destructive" });
     } finally {
-      setIsSavingState(false);
+      setLoadingState('idle');
     }
   }, [currentWorkout, initialTemplateWorkout, loadedTemplateName, selectedDay, selectedWeek, toast]);
 
   const handleLoadWeekAndDay = useCallback(async () => {
-    setIsLoadingWeekDay(true);
+    setLoadingState('loading-week-day');
     justLoadedStateRef.current = false; 
     try {
       const loadedState = await loadCurrentAppState();
@@ -271,52 +228,18 @@ export default function FitnessFocusPage() {
       console.error("Failed to load week/day from app state:", error);
       toast({ title: "Load Failed", description: "Could not load week/day.", variant: "destructive" });
     } finally {
-      setIsLoadingWeekDay(false);
+      setLoadingState('idle');
     }
   }, [toast, setSelectedWeek, setSelectedDay]);
 
   const handlePopulateLoggedInfo = useCallback(async () => {
-    setIsPopulatingWorkout(true);
+    setLoadingState('populating-workout');
     justLoadedStateRef.current = true; 
     try {
       const loadedState = await loadCurrentAppState();
       if (loadedState && loadedState.currentWorkout) {
-        const clonedCurrentWorkout = JSON.parse(JSON.stringify(loadedState.currentWorkout || []));
-        const clonedInitialTemplateWorkout = JSON.parse(JSON.stringify(loadedState.initialTemplateWorkout || []));
-
-        const processedCurrentWorkout = clonedCurrentWorkout.map((ex: WorkoutExercise) => ({
-          ...ex,
-          id: ex.id || crypto.randomUUID(),
-          tool: ex.tool || "",
-          targetMuscleGroup: ex.targetMuscleGroup || "",
-          sets: ex.sets.map((s: IndividualSet) => ({
-            ...s,
-            id: s.id || crypto.randomUUID(),
-            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
-            notes: s.notes || "",
-            isCompleted: s.isCompleted || false,
-          })),
-        }));
-
-        const processedInitialTemplateWorkout = clonedInitialTemplateWorkout.map((ex: WorkoutExercise) => ({
-          ...ex,
-          id: ex.id || crypto.randomUUID(),
-          tool: ex.tool || "",
-          targetMuscleGroup: ex.targetMuscleGroup || "",
-          sets: ex.sets.map((s: IndividualSet) => ({
-            ...s,
-            id: s.id || crypto.randomUUID(),
-            targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-            targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-            loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-            loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
-            notes: s.notes || "",
-            isCompleted: s.isCompleted || false,
-          })),
-        }));
+        const processedCurrentWorkout = processLoadedWorkout(loadedState.currentWorkout);
+        const processedInitialTemplateWorkout = processLoadedWorkout(loadedState.initialTemplateWorkout);
         
         setCurrentWorkout(processedCurrentWorkout);
         setInitialTemplateWorkout(processedInitialTemplateWorkout);
@@ -331,9 +254,11 @@ export default function FitnessFocusPage() {
       toast({ title: "Population Failed", description: "Could not populate workout data.", variant: "destructive" });
       justLoadedStateRef.current = false; 
     } finally {
-      setIsPopulatingWorkout(false);
+      setLoadingState('idle');
     }
   }, [toast, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
+
+  const isLoading = loadingState !== 'idle';
 
   return (
     <div className="min-h-screen flex flex-col bg-secondary/20">
@@ -352,7 +277,7 @@ export default function FitnessFocusPage() {
               setSelectedWeek={setSelectedWeek}
               selectedDay={selectedDay}
               setSelectedDay={setSelectedDay}
-              isLoadingTemplate={isLoadingTemplate || isLoadingWeekDay || isPopulatingWorkout || isLoadingHistory}
+              isLoadingTemplate={loadingState === 'loading-template'}
             />
             <WorkoutLogger
               currentWorkout={currentWorkout}
@@ -362,18 +287,14 @@ export default function FitnessFocusPage() {
               onLoadWeekAndDay={handleLoadWeekAndDay}
               onPopulateLoggedInfo={handlePopulateLoggedInfo}
               onResetTemplate={handleResetToTemplate}
-              isLoading={isLoadingTemplate || isLoadingHistory}
-              isLogging={isLoggingWorkout}
-              isSavingState={isSavingState} 
-              isLoadingWeekDay={isLoadingWeekDay}
-              isPopulatingWorkout={isPopulatingWorkout}
+              loadingState={loadingState}
               templateName={loadedTemplateName}
               selectedDay={selectedDay}
             />
           </TabsContent>
 
           <TabsContent value="progress">
-            <ProgressDisplay historyFlat={workoutHistory} isLoading={isLoadingHistory} />
+            <ProgressDisplay historyFlat={workoutHistory} isLoading={loadingState === 'loading-history'} />
           </TabsContent>
 
           <TabsContent value="ai">
@@ -387,4 +308,5 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
+
     

@@ -5,13 +5,14 @@ import type { WorkoutTemplate, WorkoutExercise, IndividualSet, LoggedSetInfo, Se
 import { suggestExercise as performAiExerciseSuggestion } from "@/ai/flows/suggest-exercise";
 import type { SuggestExerciseInput, SuggestExerciseOutput } from "@/ai/flows/suggest-exercise";
 import { supabase } from "./supabaseClient";
+import { processLoadedWorkout, processWorkoutForPersistence } from "./utils";
 
 export async function loadWorkoutTemplate(dayIdentifier: number): Promise<WorkoutTemplate | null> {
   console.log(`Loading template for day: ${dayIdentifier} from Supabase "Templates" table`);
 
   const { data: templateRows, error } = await supabase
     .from('Templates')
-    .select('Exercise, Tool') // Corrected: Only select existing columns
+    .select('Exercise, Tool')
     .eq('Day', dayIdentifier);
 
   if (error) {
@@ -86,7 +87,7 @@ export async function logWorkout(week: number, day: number, currentWorkoutExerci
           Reps: isNaN(repsAsNumber) ? null : repsAsNumber,
           Completed: true,
           Tool: exercise.tool || null,
-          SetNumber: set.setNumber,
+          // SetNumber is not included as it's not in the confirmed schema
         });
         loggedSetsCount++;
       }
@@ -128,28 +129,23 @@ export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
     return [];
   }
   
-  const historyEntries: LoggedSetDatabaseEntry[] = data.map((item: any) => ({
-    id: item.id,
-    Week: item.Week,
-    Day: item.Day,
-    TargetGroup: item["Target Group"],
-    Exercise: item.Exercise,
-    Weight: item.Weight,
-    Reps: item.Reps,
-    Completed: item.Completed,
-    Tool: item.Tool,
-    SetNumber: item["SetNumber"], 
-  }));
-
-  return historyEntries;
+  // The data from supabase already matches the LoggedSetDatabaseEntry type, so a direct cast is fine
+  return data as LoggedSetDatabaseEntry[];
 }
 
 export async function saveCurrentAppState(appState: SerializableAppState): Promise<void> {
-  console.log("Saving current app state to Supabase with ID 1:", appState);
+  console.log("Saving current app state to Supabase with ID 1");
+
+  // Use the utility function to ensure data is clean before saving
+  const cleanAppState = {
+    ...appState,
+    currentWorkout: processWorkoutForPersistence(appState.currentWorkout),
+    initialTemplateWorkout: processWorkoutForPersistence(appState.initialTemplateWorkout),
+  };
 
   const { data, error } = await supabase
     .from('Current State')
-    .upsert({ id: 1, state_data: appState, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+    .upsert({ id: 1, state_data: cleanAppState, updated_at: new Date().toISOString() }, { onConflict: 'id' })
     .select();
 
   if (error) {
@@ -174,44 +170,16 @@ export async function loadCurrentAppState(): Promise<SerializableAppState | null
   }
 
   if (data && data.state_data) {
-    console.log("App state loaded successfully from Supabase:", data.state_data);
+    console.log("App state loaded successfully from Supabase.");
     const loadedState = data.state_data as any;
+    
+    // Use the utility function to process loaded data
     const validatedState: SerializableAppState = {
         selectedWeek: loadedState.selectedWeek || 1,
         selectedDay: loadedState.selectedDay || 1,
-        currentWorkout: (loadedState.currentWorkout || []).map((ex: any) => ({
-            ...ex,
-            id: ex.id || crypto.randomUUID(),
-            tool: ex.tool || "",
-            targetMuscleGroup: ex.targetMuscleGroup || "",
-            sets: (ex.sets || []).map((s: any) => ({
-                ...s,
-                id: s.id || crypto.randomUUID(),
-                targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-                targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-                loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-                loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
-                notes: s.notes || "",
-                isCompleted: s.isCompleted || false,
-            }))
-        })),
+        currentWorkout: processLoadedWorkout(loadedState.currentWorkout),
         loadedTemplateName: loadedState.loadedTemplateName || undefined,
-        initialTemplateWorkout: (loadedState.initialTemplateWorkout || []).map((ex: any) => ({
-             ...ex,
-            id: ex.id || crypto.randomUUID(),
-            tool: ex.tool || "",
-            targetMuscleGroup: ex.targetMuscleGroup || "",
-            sets: (ex.sets || []).map((s: any) => ({
-                ...s,
-                id: s.id || crypto.randomUUID(),
-                targetWeight: (s.targetWeight !== undefined && s.targetWeight !== null) ? String(s.targetWeight) : "",
-                targetReps: (s.targetReps !== undefined && s.targetReps !== null) ? Number(s.targetReps) : undefined,
-                loggedWeight: (s.loggedWeight !== undefined && s.loggedWeight !== null) ? String(s.loggedWeight) : "",
-                loggedReps: (s.loggedReps === undefined || s.loggedReps === null || String(s.loggedReps).trim() === '') ? "" : Number(String(s.loggedReps).trim()),
-                notes: s.notes || "",
-                isCompleted: s.isCompleted || false,
-            }))
-        })),
+        initialTemplateWorkout: processLoadedWorkout(loadedState.initialTemplateWorkout),
     };
     return validatedState;
   } else {
@@ -232,3 +200,4 @@ export async function suggestExercise(input: SuggestExerciseInput): Promise<Sugg
   }
 }
 
+    

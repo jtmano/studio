@@ -10,12 +10,13 @@ import { ProgressDisplay } from '@/components/fitness/ProgressDisplay';
 import { AiExerciseSuggester } from '@/components/fitness/AiExerciseSuggester';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import type { WorkoutExercise, IndividualSet, WorkoutHistoryItem, WorkoutTemplate, SerializableAppState, LoggedSetDatabaseEntry } from '@/types/fitness';
-import { loadWorkoutTemplate, logWorkout, getWorkoutHistory, saveCurrentAppState, loadCurrentAppState } from '@/lib/actions';
+import type { WorkoutExercise, SerializableAppState, LoggedSetDatabaseEntry, QueuedWorkout } from '@/types/fitness';
+import { loadWorkoutTemplate, logWorkout as logWorkoutToSupabase, getWorkoutHistory } from '@/lib/actions';
+import { loadCurrentAppState, saveCurrentAppState, getSyncQueue, clearSyncQueue } from '@/lib/local-storage';
 import { processWorkoutForPersistence, processLoadedWorkout } from '@/lib/utils';
 import { Dumbbell, LineChart, Lightbulb } from 'lucide-react';
 
-type LoadingState = 'idle' | 'loading-template' | 'logging' | 'saving-state' | 'loading-history' | 'loading-week-day' | 'populating-workout';
+type LoadingState = 'idle' | 'loading-template' | 'logging' | 'saving-state' | 'loading-history' | 'syncing';
 
 export default function FitnessFocusPage() {
   const { toast } = useToast();
@@ -29,6 +30,7 @@ export default function FitnessFocusPage() {
   const [workoutHistory, setWorkoutHistory] = useState<LoggedSetDatabaseEntry[]>([]);
   
   const [loadingState, setLoadingState] = useState<LoadingState>('loading-history');
+  const [isOnline, setIsOnline] = useState<boolean>(true);
 
   const justLoadedStateRef = useRef<boolean>(false); 
   
@@ -49,6 +51,69 @@ export default function FitnessFocusPage() {
     }],
   }], []);
 
+  const syncOfflineWorkouts = useCallback(async () => {
+    const queue = getSyncQueue();
+    if (queue.length === 0) return;
+
+    setLoadingState('syncing');
+    toast({ title: "Syncing Offline Data...", description: `Attempting to sync ${queue.length} workout(s).` });
+
+    let successfullySynced = 0;
+    const remainingQueue: QueuedWorkout[] = [];
+
+    for (const item of queue) {
+      const { success } = await logWorkoutToSupabase(item.week, item.day, item.workout);
+      if (success) {
+        successfullySynced++;
+      } else {
+        remainingQueue.push(item);
+      }
+    }
+
+    clearSyncQueue();
+    if (remainingQueue.length > 0) {
+      // Re-add failed items to the queue
+      remainingQueue.forEach(item => {
+        const currentQueue = getSyncQueue();
+        saveCurrentAppState({ queuedWorkouts: [...currentQueue, item] });
+      });
+      toast({ title: "Sync Partially Failed", description: `${remainingQueue.length} workout(s) could not be synced. They will be retried later.`, variant: "destructive" });
+    } else {
+      toast({ title: "Sync Complete!", description: `${successfullySynced} workout(s) successfully synced.` });
+    }
+    
+    // Refresh history after sync
+    await fetchHistory();
+    setLoadingState('idle');
+
+  }, [toast]);
+
+
+  // Effect for online/offline detection and syncing
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncOfflineWorkouts();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    // Set initial state
+    if (typeof navigator !== 'undefined') {
+      setIsOnline(navigator.onLine);
+      if (navigator.onLine) {
+        syncOfflineWorkouts();
+      }
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [syncOfflineWorkouts]);
+
+
   const fetchHistory = useCallback(async () => {
     setLoadingState('loading-history');
     try {
@@ -62,8 +127,19 @@ export default function FitnessFocusPage() {
     }
   }, [toast]); 
 
+  // Load initial state from localStorage and then fetch remote history
   useEffect(() => {
-     fetchHistory();
+    const localState = loadCurrentAppState();
+    if (localState) {
+      const { selectedWeek, selectedDay, currentWorkout, initialTemplateWorkout, loadedTemplateName } = localState;
+      if (selectedWeek) setSelectedWeek(selectedWeek);
+      if (selectedDay) setSelectedDay(selectedDay);
+      if (currentWorkout) setCurrentWorkout(processLoadedWorkout(currentWorkout));
+      if (initialTemplateWorkout) setInitialTemplateWorkout(processLoadedWorkout(initialTemplateWorkout));
+      if (loadedTemplateName) setLoadedTemplateName(loadedTemplateName);
+      justLoadedStateRef.current = true; // Prevents immediate template fetch
+    }
+    fetchHistory();
   }, [fetchHistory]);
 
   const fetchTemplateForDay = useCallback(async (day: number) => {
@@ -92,7 +168,7 @@ export default function FitnessFocusPage() {
       } else {
         exercisesToSet = getDefaultExercise();
         templateNameToSet = `Day ${day} (Default Blank)`;
-        toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}. Populating from history...`, variant: "default" });
+        toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}.`, variant: "default" });
       }
 
       if (workoutHistory && workoutHistory.length > 0) {
@@ -136,19 +212,16 @@ export default function FitnessFocusPage() {
     workoutHistory,
   ]);
 
+  // Effect to fetch template when day changes
   useEffect(() => {
-    // Only run if not currently in another loading state, and history has been fetched
-    if (loadingState !== 'idle' && loadingState !== 'loading-history') {
-      return; 
-    }
+    if (loadingState === 'loading-history') return;
+
     if (justLoadedStateRef.current) {
       justLoadedStateRef.current = false; 
       return;
     }
     fetchTemplateForDay(selectedDay);
-  }, [selectedDay, workoutHistory]);
-
-
+  }, [selectedDay, workoutHistory, fetchTemplateForDay, loadingState]);
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
@@ -171,26 +244,35 @@ export default function FitnessFocusPage() {
       toast({ title: "No Sets Logged", description: "Please mark at least one set as completed to log the workout.", variant: "default" });
       return;
     }
-    setLoadingState('logging');
-    try {
-      const result = await logWorkout(selectedWeek, selectedDay, currentWorkout);
-      if (result.success) {
-        toast({ title: "Workout Logged!", description: `${result.loggedSetsCount} sets for Week ${selectedWeek}, Day ${selectedDay} saved.` });
-        fetchHistory(); 
-      } else {
-        toast({ title: "Logging Partially Failed", description: result.error || "Could not save your workout completely.", variant: "destructive" });
+
+    if (isOnline) {
+      setLoadingState('logging');
+      try {
+        const result = await logWorkoutToSupabase(selectedWeek, selectedDay, currentWorkout);
+        if (result.success) {
+          toast({ title: "Workout Logged!", description: `${result.loggedSetsCount} sets for Week ${selectedWeek}, Day ${selectedDay} saved.` });
+          fetchHistory(); 
+        } else {
+          toast({ title: "Logging Failed", description: result.error || "Could not save your workout.", variant: "destructive" });
+        }
+      } catch (error) {
+        console.error("Failed to log workout:", error);
+        toast({ title: "Logging Failed", description: (error as Error).message || "Could not save your workout.", variant: "destructive" });
+      } finally {
+        setLoadingState('idle');
       }
-    } catch (error) {
-      console.error("Failed to log workout:", error);
-      toast({ title: "Logging Failed", description: (error as Error).message || "Could not save your workout.", variant: "destructive" });
-    } finally {
-      setLoadingState('idle');
+    } else {
+      // Offline: Add to queue
+      const queuedWorkout: QueuedWorkout = { week: selectedWeek, day: selectedDay, workout: currentWorkout };
+      const currentQueue = getSyncQueue();
+      saveCurrentAppState({ queuedWorkouts: [...currentQueue, queuedWorkout] });
+      toast({ title: "Workout Saved Offline", description: "Your workout is saved and will be synced when you're back online." });
     }
   };
 
   const handleSaveCurrentState = useCallback(async () => {
     setLoadingState('saving-state');
-    const appState: SerializableAppState = {
+    const appState: Partial<SerializableAppState> = {
       selectedWeek,
       selectedDay,
       currentWorkout: processWorkoutForPersistence(currentWorkout),
@@ -198,8 +280,8 @@ export default function FitnessFocusPage() {
       initialTemplateWorkout: processWorkoutForPersistence(initialTemplateWorkout),
     };
     try {
-      await saveCurrentAppState(appState);
-      toast({ title: "State Saved", description: "Your current progress has been saved." });
+      saveCurrentAppState(appState);
+      toast({ title: "State Saved", description: "Your current progress has been saved locally." });
     } catch (error) {
       console.error("Failed to save app state:", error);
       toast({ title: "Save State Failed", description: "Could not save your current state.", variant: "destructive" });
@@ -208,51 +290,6 @@ export default function FitnessFocusPage() {
     }
   }, [currentWorkout, initialTemplateWorkout, loadedTemplateName, selectedDay, selectedWeek, toast]);
 
-  const handleLoadWeekAndDay = useCallback(async () => {
-    setLoadingState('loading-week-day');
-    justLoadedStateRef.current = false; 
-    try {
-      const loadedState = await loadCurrentAppState();
-      if (loadedState) {
-        setSelectedWeek(loadedState.selectedWeek);
-        setSelectedDay(loadedState.selectedDay); 
-        toast({ title: "Week & Day Loaded", description: `Switched to Week ${loadedState.selectedWeek}, Day ${loadedState.selectedDay}. Template loading...` });
-      } else {
-        toast({ title: "No Saved State", description: "No saved state found to load week/day from.", variant: "default" });
-      }
-    } catch (error) {
-      console.error("Failed to load week/day from app state:", error);
-      toast({ title: "Load Failed", description: "Could not load week/day.", variant: "destructive" });
-    } finally {
-      setLoadingState('idle');
-    }
-  }, [toast, setSelectedWeek, setSelectedDay]);
-
-  const handlePopulateLoggedInfo = useCallback(async () => {
-    setLoadingState('populating-workout');
-    justLoadedStateRef.current = true; 
-    try {
-      const loadedState = await loadCurrentAppState();
-      if (loadedState && loadedState.currentWorkout) {
-        const processedCurrentWorkout = processLoadedWorkout(loadedState.currentWorkout);
-        const processedInitialTemplateWorkout = processLoadedWorkout(loadedState.initialTemplateWorkout);
-        
-        setCurrentWorkout(processedCurrentWorkout);
-        setInitialTemplateWorkout(processedInitialTemplateWorkout);
-        setLoadedTemplateName(loadedState.loadedTemplateName);
-        toast({ title: "Workout Info Populated", description: "Logged data applied to the current day." });
-      } else {
-        toast({ title: "No Workout Data", description: "No saved workout data found to populate.", variant: "default" });
-        justLoadedStateRef.current = false; 
-      }
-    } catch (error) {
-      console.error("Failed to populate workout info from app state:", error);
-      toast({ title: "Population Failed", description: "Could not populate workout data.", variant: "destructive" });
-      justLoadedStateRef.current = false; 
-    } finally {
-      setLoadingState('idle');
-    }
-  }, [toast, setCurrentWorkout, setInitialTemplateWorkout, setLoadedTemplateName]);
 
   const isLoading = loadingState !== 'idle';
 
@@ -280,12 +317,11 @@ export default function FitnessFocusPage() {
               setCurrentWorkout={setCurrentWorkout}
               onLogWorkout={handleLogWorkout}
               onSaveCurrentState={handleSaveCurrentState} 
-              onLoadWeekAndDay={handleLoadWeekAndDay}
-              onPopulateLoggedInfo={handlePopulateLoggedInfo}
               onResetTemplate={handleResetToTemplate}
               loadingState={loadingState}
               templateName={loadedTemplateName}
               selectedDay={selectedDay}
+              isOnline={isOnline}
             />
           </TabsContent>
 

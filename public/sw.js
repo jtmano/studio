@@ -1,30 +1,27 @@
 
-// public/sw.js
 const CACHE_NAME = 'fitness-focus-cache-v1';
-const urlsToCache = [
-  '/',
-  '/offline.html'
-  // Add paths to critical JS/CSS bundles if they are stable and known
-  // e.g., '/_next/static/css/main.css', '/_next/static/chunks/main.js'
-  // However, Next.js uses hashed filenames, making this hard without build integration.
+const OFFLINE_URL = 'offline.html';
+const API_ROUTES = [
+  '/api/load-template', // Assuming templates are fetched via an API route
+  '/api/get-history'   // Assuming history is fetched via an API route
+  // In reality, these are Supabase URLs, so we'll need to match them.
+  // Supabase URLs are complex, so we'll match by path pattern.
 ];
 
 self.addEventListener('install', (event) => {
   console.log('Service Worker: Installing...');
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Service Worker: Caching app shell');
-        return cache.addAll(urlsToCache);
-      })
-      .then(() => {
-        console.log('Service Worker: Skip waiting on install');
-        return self.skipWaiting();
-      })
-      .catch(error => {
-        console.error('Service Worker: Caching failed during install', error);
-      })
+    caches.open(CACHE_NAME).then((cache) => {
+      console.log('Service Worker: Caching app shell');
+      return cache.addAll([
+        '/',
+        '/offline.html',
+        // Add other core assets you want to pre-cache
+        // e.g., '/styles/main.css', '/scripts/main.js'
+      ]);
+    })
   );
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -32,68 +29,57 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames.filter(cacheName => cacheName !== CACHE_NAME)
-          .map(cacheName => {
-            console.log('Service Worker: Deleting old cache', cacheName);
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            console.log('Service Worker: Clearing old cache:', cacheName);
             return caches.delete(cacheName);
-          })
+          }
+        })
       );
-    }).then(() => {
-      console.log('Service Worker: Claiming clients');
-      return self.clients.claim();
     })
   );
+  self.clients.claim();
 });
 
+// Stale-while-revalidate strategy for Supabase API calls
 self.addEventListener('fetch', (event) => {
-  // console.log('Service Worker: Fetching', event.request.url);
+  const url = new URL(event.request.url);
 
-  // Strategy: Network first, then cache, then offline page for navigation
-  if (event.request.mode === 'navigate') {
+  // Check if the request is for Supabase data (for templates or history)
+  // This is a generic pattern. You might need to make it more specific.
+  const isApiRequest = url.hostname.endsWith('supabase.co') && url.pathname.includes('/rest/v1/');
+
+  if (isApiRequest) {
     event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          // Optional: Cache successful GET navigation requests
-          // if (response.ok && event.request.method === 'GET') {
-          //   const responseToCache = response.clone();
-          //   caches.open(CACHE_NAME).then(cache => {
-          //     cache.put(event.request, responseToCache);
-          //   });
-          // }
-          return response;
-        })
-        .catch(() => {
-          console.log('Service Worker: Network request failed, serving offline page.');
-          return caches.match('/offline.html');
-        })
-    );
-  } else if (urlsToCache.includes(event.request.url) || event.request.destination === 'style' || event.request.destination === 'script') {
-    // Strategy: Cache first, then network for app shell assets and static resources
-     event.respondWith(
-      caches.match(event.request)
-        .then((response) => {
-          if (response) {
-            // console.log('Service Worker: Serving from cache', event.request.url);
-            return response;
-          }
-          // console.log('Service Worker: Not in cache, fetching from network', event.request.url);
-          return fetch(event.request).then(networkResponse => {
-            if (networkResponse && networkResponse.ok && event.request.method === 'GET') {
-              // Optional: Cache other assets dynamically if needed
-              // const responseToCache = networkResponse.clone();
-              // caches.open(CACHE_NAME).then(cache => {
-              //   cache.put(event.request, responseToCache);
-              // });
-            }
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cachedResponse) => {
+          const fetchPromise = fetch(event.request).then((networkResponse) => {
+            // If the fetch is successful, clone it and put it in the cache
+            cache.put(event.request, networkResponse.clone());
             return networkResponse;
           });
-        })
-        .catch(error => {
-            console.error('Service Worker: Fetch failed for non-navigation', error);
-            // For non-navigation requests, you might not want to return offline.html
-            // but rather let the browser handle the error or return a specific error response.
-        })
+
+          // Return cached response if available, otherwise wait for the network
+          return cachedResponse || fetchPromise;
+        });
+      })
+    );
+  } else if (event.request.mode === 'navigate') {
+    // Handle navigation requests (page loads)
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        // If the network fails, serve the offline page
+        return caches.open(CACHE_NAME).then((cache) => {
+          return cache.match(OFFLINE_URL);
+        });
+      })
+    );
+  } else {
+    // For other requests (CSS, JS, images), use a cache-first strategy
+    event.respondWith(
+      caches.match(event.request).then((response) => {
+        return response || fetch(event.request);
+      })
     );
   }
-  // For other requests, just let the browser handle them
 });

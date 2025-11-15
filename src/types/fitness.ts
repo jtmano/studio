@@ -1,4 +1,5 @@
 
+
 export interface IndividualSet {
   id: string; 
   setNumber: number;
@@ -36,7 +37,6 @@ export interface LoggedSetDatabaseEntry {
   Reps?: number | null;
   Completed?: boolean | null;
   Tool?: string | null;
-  SetNumber?: number | null; // "Set Number" in DB (int2)
 }
 
 
@@ -56,7 +56,7 @@ export interface LoggedSetInfo {
 // It will be constructed on the client-side from LoggedSetDatabaseEntry[]
 export interface WorkoutHistoryItem {
   id: string; // Synthesized ID, e.g., "week-X-day-Y"
-  date: string; // May not be available directly from "Workout History" table, might need to be inferred or omitted
+  date: string; 
   week: number;
   day: number;
   workoutName?: string; 
@@ -64,12 +64,19 @@ export interface WorkoutHistoryItem {
 }
 
 
+export interface QueuedWorkout {
+  week: number;
+  day: number;
+  workout: WorkoutExercise[];
+}
+
 export interface SerializableAppState {
   selectedWeek: number;
   selectedDay: number;
   currentWorkout: WorkoutExercise[];
   loadedTemplateName?: string;
   initialTemplateWorkout: WorkoutExercise[];
+  queuedWorkouts?: QueuedWorkout[]; // For offline sync
 }
 
 // Keep Exercise type for AI Suggester input if it expects a simpler structure

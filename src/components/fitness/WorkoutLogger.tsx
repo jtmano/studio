@@ -6,24 +6,23 @@ import type { WorkoutExercise, IndividualSet } from "@/types/fitness";
 import { ExerciseDetailCard } from "./ExerciseEditorCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { PlusCircle, Save, RotateCcw, Send, DownloadCloud, CalendarClock, ListChecks, EllipsisVertical } from 'lucide-react';
+import { PlusCircle, Save, RotateCcw, Send, Wifi, WifiOff } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
+import { Badge } from '@/components/ui/badge';
 
-type LoadingState = 'idle' | 'loading-template' | 'logging' | 'saving-state' | 'loading-history' | 'loading-week-day' | 'populating-workout';
+type LoadingState = 'idle' | 'loading-template' | 'logging' | 'saving-state' | 'loading-history' | 'syncing';
 
 interface WorkoutLoggerProps {
   currentWorkout: WorkoutExercise[];
   setCurrentWorkout: Dispatch<SetStateAction<WorkoutExercise[]>>;
   onLogWorkout: () => Promise<void>;
   onSaveCurrentState: () => Promise<void>; 
-  onLoadWeekAndDay: () => Promise<void>;
-  onPopulateLoggedInfo: () => Promise<void>;
   onResetTemplate: () => void;
   loadingState: LoadingState;
   templateName?: string;
   selectedDay: number;
+  isOnline: boolean;
 }
 
 export function WorkoutLogger({
@@ -31,12 +30,11 @@ export function WorkoutLogger({
   setCurrentWorkout,
   onLogWorkout,
   onSaveCurrentState, 
-  onLoadWeekAndDay,
-  onPopulateLoggedInfo,
   onResetTemplate,
   loadingState,
   templateName,
-  selectedDay
+  selectedDay,
+  isOnline
 }: WorkoutLoggerProps) {
   const { toast } = useToast();
 
@@ -158,9 +156,13 @@ export function WorkoutLogger({
           <CardTitle className="text-xl font-semibold">
             {templateName ? `Current Workout: ${templateName}` : "Log Your Workout"}
           </CardTitle>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+             <Badge variant={isOnline ? "default" : "destructive"} className="flex items-center gap-2">
+                {isOnline ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+                {isOnline ? 'Online' : 'Offline'}
+             </Badge>
              <Button onClick={onResetTemplate} variant="outline" size="sm" disabled={isLoading}>
-              <RotateCcw className="mr-2 h-4 w-4" /> Reset to Template
+              <RotateCcw className="mr-2 h-4 w-4" /> Reset
             </Button>
           </div>
         </div>
@@ -169,7 +171,7 @@ export function WorkoutLogger({
         {currentWorkout.length === 0 ? (
            <div className="text-center py-8 text-muted-foreground">
             <p className="mb-2">No exercises loaded.</p>
-            <p className='text-sm'>Add an exercise to get started or use the load options.</p>
+            <p className='text-sm'>Add an exercise to get started.</p>
           </div>
         ) : (
           currentWorkout.map((exercise, index) => (
@@ -191,24 +193,6 @@ export function WorkoutLogger({
             <PlusCircle className="mr-2 h-4 w-4" /> Add Exercise
           </Button>
           <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" disabled={isLoading} aria-label="More options">
-                  <EllipsisVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={onLoadWeekAndDay} disabled={isLoading}>
-                  <CalendarClock className="mr-2 h-4 w-4" />
-                  {loadingState === 'loading-week-day' ? "Loading..." : "Load Week/Day"}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={onPopulateLoggedInfo} disabled={isLoading}>
-                  <ListChecks className="mr-2 h-4 w-4" />
-                  {loadingState === 'populating-workout' ? "Populating..." : "Populate Workout"}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
             <Button onClick={onSaveCurrentState} disabled={isLoading || currentWorkout.length === 0}>
                 {loadingState === 'saving-state' ? "Saving..." : <><Save className="mr-2 h-4 w-4" /> Save</>}
             </Button>
@@ -217,7 +201,7 @@ export function WorkoutLogger({
               disabled={isLoading || currentWorkout.length === 0 || currentWorkout.every(ex => ex.sets.every(s => !s.isCompleted))}
               className="bg-green-600 hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600 text-white"
             >
-              {loadingState === 'logging' ? "Logging..." : <><Send className="mr-2 h-4 w-4" /> Log Workout</>}
+              {loadingState === 'logging' ? "Logging..." : (loadingState === 'syncing' ? "Syncing..." : <><Send className="mr-2 h-4 w-4" /> Log Workout</>)}
             </Button>
           </div>
         </div>
@@ -225,5 +209,3 @@ export function WorkoutLogger({
     </Card>
   );
 }
-
-    

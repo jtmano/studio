@@ -134,15 +134,11 @@ export default function FitnessFocusPage() {
     getDefaultExercise, 
     toast, 
     workoutHistory,
-    setCurrentWorkout,
-    setInitialTemplateWorkout,
-    setLoadedTemplateName,
-    setLoadingState,
   ]);
 
   useEffect(() => {
-    const isAnyLoading = loadingState !== 'idle';
-    if (isAnyLoading) {
+    // Only run if not currently in another loading state, and history has been fetched
+    if (loadingState !== 'idle' && loadingState !== 'loading-history') {
       return; 
     }
     if (justLoadedStateRef.current) {
@@ -150,7 +146,7 @@ export default function FitnessFocusPage() {
       return;
     }
     fetchTemplateForDay(selectedDay);
-  }, [selectedDay, fetchTemplateForDay, loadingState, workoutHistory]);
+  }, [selectedDay, workoutHistory]);
 
 
   
@@ -308,5 +304,3 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-
-    

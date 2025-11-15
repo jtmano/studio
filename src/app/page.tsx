@@ -221,7 +221,7 @@ export default function FitnessFocusPage() {
       return;
     }
     fetchTemplateForDay(selectedDay);
-  }, [selectedDay, workoutHistory, fetchTemplateForDay, loadingState]);
+  }, [selectedDay, workoutHistory, fetchTemplateForDay]);
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {

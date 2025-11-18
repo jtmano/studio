@@ -140,7 +140,7 @@ export default function FitnessFocusPage() {
     fetchHistory();
   }, [fetchHistory]);
 
- const fetchTemplateForDay = useCallback(async (day: number) => {
+ const fetchTemplateForDay = useCallback(async (day: number, history: LoggedSetDatabaseEntry[]) => {
     setLoadingState('loading-template');
     toast({ title: "Loading Template...", description: `Fetching structure for Day ${day}.` });
 
@@ -159,48 +159,39 @@ export default function FitnessFocusPage() {
             toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}.`, variant: "default" });
         }
 
-        // Fetch the latest history right before populating to ensure it's fresh
-        const latestHistory = await getWorkoutHistory();
-        setWorkoutHistory(latestHistory);
+        if (history && history.length > 0) {
+            // Find the most recent week for the selected day
+            const historyForDay = history.filter(entry => entry.Day === day);
+            const latestWeek = historyForDay.reduce((max, entry) => (entry.Week > max ? entry.Week : max), 0);
 
-        if (latestHistory && latestHistory.length > 0) {
-            const populatedExercises = exercisesToSet.map(templateExercise => {
-                // Find all historical performances for this specific exercise
-                const allInstances = latestHistory.filter(
-                    histEntry =>
-                        histEntry.Exercise === templateExercise.name &&
-                        (histEntry.Tool || "") === (templateExercise.tool || "")
-                );
+            if (latestWeek > 0) {
+                // Get all entries for that specific latest session (week and day)
+                const lastSessionEntries = historyForDay.filter(entry => entry.Week === latestWeek);
 
-                if (allInstances.length > 0) {
-                    // Find the best performance (highest weight, then highest reps)
-                    const bestPerformance = allInstances.reduce((best, current) => {
-                        const currentWeight = current.Weight ?? 0;
-                        const bestWeight = best.Weight ?? 0;
-                        const currentReps = current.Reps ?? 0;
-                        const bestReps = best.Reps ?? 0;
+                const populatedExercises = exercisesToSet.map(templateExercise => {
+                    // Find all sets for this exercise from the last session
+                    const exerciseHistory = lastSessionEntries.filter(
+                        hist =>
+                            hist.Exercise === templateExercise.name &&
+                            (hist.Tool || "") === (templateExercise.tool || "")
+                    );
 
-                        if (currentWeight > bestWeight) {
-                            return current;
-                        }
-                        if (currentWeight === bestWeight && currentReps > bestReps) {
-                            return current;
-                        }
-                        return best;
-                    }, allInstances[0]);
-
-                    // Apply the best performance to all sets of this exercise in the template
-                    const newSets = templateExercise.sets.map(templateSet => ({
-                        ...templateSet,
-                        loggedWeight: (bestPerformance.Weight !== undefined && bestPerformance.Weight !== null) ? String(bestPerformance.Weight) : "",
-                        loggedReps: (bestPerformance.Reps !== undefined && bestPerformance.Reps !== null) ? Number(bestPerformance.Reps) : "",
-                    }));
-                    return { ...templateExercise, sets: newSets };
-                }
-                // If no history, return the exercise as is from the template
-                return templateExercise;
-            });
-            exercisesToSet = populatedExercises;
+                    if (exerciseHistory.length > 0) {
+                        // Replace template sets with the actual logged sets from history
+                        const newSets = exerciseHistory.map((histEntry, index) => ({
+                            id: crypto.randomUUID(),
+                            setNumber: index + 1,
+                            loggedWeight: (histEntry.Weight !== undefined && histEntry.Weight !== null) ? String(histEntry.Weight) : "",
+                            loggedReps: (histEntry.Reps !== undefined && histEntry.Reps !== null) ? String(histEntry.Reps) : "",
+                            isCompleted: false, // Reset completion status
+                            notes: "", // Reset notes
+                        }));
+                        return { ...templateExercise, sets: newSets };
+                    }
+                    return templateExercise; // Return exercise as is if no history for it
+                });
+                exercisesToSet = populatedExercises;
+            }
         }
 
         setCurrentWorkout(exercisesToSet);
@@ -225,22 +216,18 @@ export default function FitnessFocusPage() {
 
     // Effect to fetch template when day changes
   useEffect(() => {
-    // Prevent fetching if another major state change is happening
-    if (['loading-template', 'saving-state', 'logging', 'syncing', 'loading-history'].includes(loadingState)) return;
+    if (['saving-state', 'logging', 'syncing'].includes(loadingState)) return;
     
-    // If we just loaded state from localStorage, don't immediately fetch a new template.
-    // Let the user's saved workout remain.
     if (justLoadedStateRef.current) {
       justLoadedStateRef.current = false;
       return;
     }
 
-    // Only fetch if workoutHistory has been populated at least once
-    if (workoutHistory.length > 0 || loadingState === 'idle') {
-        fetchTemplateForDay(selectedDay);
+    if (workoutHistory.length > 0) {
+        fetchTemplateForDay(selectedDay, workoutHistory);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDay, fetchHistory]); // Depends on selectedDay, and fetchHistory to ensure history is available
+  }, [selectedDay, workoutHistory]); 
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
@@ -314,7 +301,7 @@ export default function FitnessFocusPage() {
   const handleLoadSpecificDay = useCallback(async (week: number, day: number) => {
     setLoadingState('loading-specific-day');
     setSelectedWeek(week);
-    setSelectedDay(day); // This will trigger the useEffect to fetch the template for the new day
+    setSelectedDay(day);
   }, []);
 
   const handlePopulateFromHistory = useCallback(() => {
@@ -331,7 +318,6 @@ export default function FitnessFocusPage() {
     toast({ title: "Populating from History..." });
 
     const populatedExercises = currentWorkout.map(exercise => {
-        // Find the most recent performance for THIS SPECIFIC exercise
         const allInstances = workoutHistory.filter(
             hist => hist.Exercise === exercise.name && (hist.Tool || "") === (exercise.tool || "")
         );
@@ -359,8 +345,6 @@ export default function FitnessFocusPage() {
     });
 
     setCurrentWorkout(populatedExercises);
-    // We set this ref to true to prevent the main useEffect from re-fetching the template
-    // and overwriting our newly populated data.
     justLoadedStateRef.current = true;
     setLoadingState('idle');
     toast({ title: "Workout Populated", description: "Exercises updated with your best performance." });
@@ -418,3 +402,5 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
+
+    

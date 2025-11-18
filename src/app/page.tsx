@@ -162,10 +162,14 @@ export default function FitnessFocusPage() {
         toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}.`, variant: "default" });
       }
 
-      if (workoutHistory && workoutHistory.length > 0) {
+      // Fetch the latest history right before populating
+      const latestHistory = await getWorkoutHistory();
+      setWorkoutHistory(latestHistory);
+
+      if (latestHistory && latestHistory.length > 0) {
           const populatedExercises = exercisesToSet.map(templateExercise => {
             // Find the most recent performance for THIS SPECIFIC exercise
-            const lastLoggedInstance = workoutHistory.find(
+            const lastLoggedInstance = latestHistory.find(
               histEntry =>
                 histEntry.Exercise === templateExercise.name &&
                 (histEntry.Tool || "") === (templateExercise.tool || "")
@@ -203,12 +207,11 @@ export default function FitnessFocusPage() {
   }, [
     getDefaultExercise, 
     toast, 
-    workoutHistory,
   ]);
 
   // Effect to fetch template when day changes
   useEffect(() => {
-    if (loadingState !== 'idle' && loadingState !== 'loading-history') return;
+    if (loadingState === 'loading-template' || loadingState === 'saving-state' || loadingState === 'logging' || loadingState === 'syncing') return;
 
     if (justLoadedStateRef.current) {
       justLoadedStateRef.current = false; 
@@ -216,7 +219,7 @@ export default function FitnessFocusPage() {
     }
     fetchTemplateForDay(selectedDay);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDay, workoutHistory]);
+  }, [selectedDay]);
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
@@ -289,9 +292,8 @@ export default function FitnessFocusPage() {
   const handleLoadSpecificDay = useCallback(async (week: number, day: number) => {
     setLoadingState('loading-specific-day');
     setSelectedWeek(week);
+    // Setting day will trigger the useEffect
     setSelectedDay(day);
-    // The useEffect that watches selectedDay will now trigger fetchTemplateForDay
-    // We just need to wait for it to complete. Let's reset loading state inside that flow.
   }, []);
 
   const handlePopulateFromHistory = useCallback(() => {
@@ -381,8 +383,6 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-
-
 
     
 

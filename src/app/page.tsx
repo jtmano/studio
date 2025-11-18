@@ -169,12 +169,14 @@ export default function FitnessFocusPage() {
                 const lastSessionEntries = historyForDay.filter(entry => entry.Week === latestWeek);
 
                 const populatedExercises = exercisesToSet.map(templateExercise => {
-                    // Find all sets for this exercise from the last session
-                    const exerciseHistory = lastSessionEntries.filter(
-                        hist =>
-                            hist.Exercise === templateExercise.name &&
-                            (hist.Tool || "") === (templateExercise.tool || "")
-                    );
+                    // Find all sets for this exercise from the last session and sort them
+                    const exerciseHistory = lastSessionEntries
+                        .filter(
+                            hist =>
+                                hist.Exercise === templateExercise.name &&
+                                (hist.Tool || "") === (templateExercise.tool || "")
+                        )
+                        .sort((a, b) => a.id - b.id); // Sort ascending by ID to preserve original order
 
                     if (exerciseHistory.length > 0) {
                         // Replace template sets with the actual logged sets from history
@@ -402,5 +404,3 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-
-    

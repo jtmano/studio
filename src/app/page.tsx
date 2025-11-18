@@ -164,6 +164,7 @@ export default function FitnessFocusPage() {
 
       if (workoutHistory && workoutHistory.length > 0) {
           const populatedExercises = exercisesToSet.map(templateExercise => {
+            // Find the most recent performance for THIS SPECIFIC exercise
             const lastLoggedInstance = workoutHistory.find(
               histEntry =>
                 histEntry.Exercise === templateExercise.name &&
@@ -171,6 +172,7 @@ export default function FitnessFocusPage() {
             );
 
             if (lastLoggedInstance) {
+              // Apply the found performance to all sets of this exercise
               const newSets = templateExercise.sets.map(templateSet => ({
                   ...templateSet,
                   loggedWeight: (lastLoggedInstance.Weight !== undefined && lastLoggedInstance.Weight !== null) ? String(lastLoggedInstance.Weight) : "",
@@ -178,6 +180,7 @@ export default function FitnessFocusPage() {
               }));
               return { ...templateExercise, sets: newSets };
             }
+            // If no history, return the exercise as is from the template
             return templateExercise;
           });
           exercisesToSet = populatedExercises;
@@ -205,14 +208,15 @@ export default function FitnessFocusPage() {
 
   // Effect to fetch template when day changes
   useEffect(() => {
-    if (loadingState !== 'idle' || workoutHistory.length === 0) return;
+    if (loadingState !== 'idle' && loadingState !== 'loading-history') return;
 
     if (justLoadedStateRef.current) {
       justLoadedStateRef.current = false; 
       return;
     }
     fetchTemplateForDay(selectedDay);
-  }, [selectedDay, workoutHistory, fetchTemplateForDay]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDay, workoutHistory]);
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
@@ -378,3 +382,6 @@ export default function FitnessFocusPage() {
   );
 }
 
+
+
+    

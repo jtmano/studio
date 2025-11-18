@@ -30,7 +30,7 @@ export default function FitnessFocusPage() {
   const [initialTemplateWorkout, setInitialTemplateWorkout] = useState<WorkoutExercise[]>([]);
   const [workoutHistory, setWorkoutHistory] = useState<LoggedSetDatabaseEntry[]>([]);
   
-  const [loadingState, setLoadingState] = useState<LoadingState>('loading-history');
+  const [loadingState, setLoadingState] = useState<LoadingState>('idle');
   const [isOnline, setIsOnline] = useState<boolean>(true);
 
   const justLoadedStateRef = useRef<boolean>(false); 
@@ -53,6 +53,7 @@ export default function FitnessFocusPage() {
   }], []);
 
   const syncOfflineWorkouts = useCallback(async () => {
+    if (typeof window === 'undefined' || !navigator.onLine) return;
     const queue = getSyncQueue();
     if (queue.length === 0) return;
 
@@ -73,17 +74,12 @@ export default function FitnessFocusPage() {
 
     clearSyncQueue();
     if (remainingQueue.length > 0) {
-      // Re-add failed items to the queue
-      remainingQueue.forEach(item => {
-        const currentQueue = getSyncQueue();
-        saveCurrentAppState({ queuedWorkouts: [...currentQueue, item] });
-      });
+      saveCurrentAppState({ queuedWorkouts: remainingQueue });
       toast({ title: "Sync Partially Failed", description: `${remainingQueue.length} workout(s) could not be synced. They will be retried later.`, variant: "destructive" });
     } else {
       toast({ title: "Sync Complete!", description: `${successfullySynced} workout(s) successfully synced.` });
     }
     
-    // Refresh history after sync
     await fetchHistory();
     setLoadingState('idle');
 
@@ -98,19 +94,20 @@ export default function FitnessFocusPage() {
     };
     const handleOffline = () => setIsOnline(false);
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    // Set initial state
-    if (typeof navigator !== 'undefined') {
-      setIsOnline(navigator.onLine);
-      if (navigator.onLine) {
-        syncOfflineWorkouts();
-      }
+    if (typeof window !== 'undefined') {
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        setIsOnline(navigator.onLine);
+        if(navigator.onLine) {
+            syncOfflineWorkouts();
+        }
     }
 
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      }
     };
   }, [syncOfflineWorkouts]);
 
@@ -138,88 +135,112 @@ export default function FitnessFocusPage() {
       if (currentWorkout) setCurrentWorkout(processLoadedWorkout(currentWorkout));
       if (initialTemplateWorkout) setInitialTemplateWorkout(processLoadedWorkout(initialTemplateWorkout));
       if (loadedTemplateName) setLoadedTemplateName(loadedTemplateName);
-      justLoadedStateRef.current = true; // Prevents immediate template fetch
+      justLoadedStateRef.current = true;
     }
     fetchHistory();
   }, [fetchHistory]);
 
-  const fetchTemplateForDay = useCallback(async (day: number) => {
+ const fetchTemplateForDay = useCallback(async (day: number) => {
     setLoadingState('loading-template');
     toast({ title: "Loading Template...", description: `Fetching structure for Day ${day}.` });
 
     try {
-      const template = await loadWorkoutTemplate(day);
-      let exercisesToSet: WorkoutExercise[];
-      let templateNameToSet: string;
+        const template = await loadWorkoutTemplate(day);
+        let exercisesToSet: WorkoutExercise[];
+        let templateNameToSet: string;
 
-      if (template && template.exercises) {
-        exercisesToSet = processLoadedWorkout(template.exercises);
-        templateNameToSet = template.name;
-        toast({ title: "Template Loaded", description: `${template.name}. Populating from history...` });
-      } else {
-        exercisesToSet = getDefaultExercise();
-        templateNameToSet = `Day ${day} (Default Blank)`;
-        toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}.`, variant: "default" });
-      }
+        if (template && template.exercises) {
+            exercisesToSet = processLoadedWorkout(template.exercises);
+            templateNameToSet = template.name;
+            toast({ title: "Template Loaded", description: `${template.name}. Populating from history...` });
+        } else {
+            exercisesToSet = getDefaultExercise();
+            templateNameToSet = `Day ${day} (Default Blank)`;
+            toast({ title: "No Template Found", description: `Loaded blank structure for Day ${day}.`, variant: "default" });
+        }
 
-      // Fetch the latest history right before populating
-      const latestHistory = await getWorkoutHistory();
-      setWorkoutHistory(latestHistory);
+        // Fetch the latest history right before populating to ensure it's fresh
+        const latestHistory = await getWorkoutHistory();
+        setWorkoutHistory(latestHistory);
 
-      if (latestHistory && latestHistory.length > 0) {
-          const populatedExercises = exercisesToSet.map(templateExercise => {
-            // Find the most recent performance for THIS SPECIFIC exercise
-            const lastLoggedInstance = latestHistory.find(
-              histEntry =>
-                histEntry.Exercise === templateExercise.name &&
-                (histEntry.Tool || "") === (templateExercise.tool || "")
-            );
+        if (latestHistory && latestHistory.length > 0) {
+            const populatedExercises = exercisesToSet.map(templateExercise => {
+                // Find all historical performances for this specific exercise
+                const allInstances = latestHistory.filter(
+                    histEntry =>
+                        histEntry.Exercise === templateExercise.name &&
+                        (histEntry.Tool || "") === (templateExercise.tool || "")
+                );
 
-            if (lastLoggedInstance) {
-              // Apply the found performance to all sets of this exercise
-              const newSets = templateExercise.sets.map(templateSet => ({
-                  ...templateSet,
-                  loggedWeight: (lastLoggedInstance.Weight !== undefined && lastLoggedInstance.Weight !== null) ? String(lastLoggedInstance.Weight) : "",
-                  loggedReps: (lastLoggedInstance.Reps !== undefined && lastLoggedInstance.Reps !== null) ? Number(lastLoggedInstance.Reps) : "",
-              }));
-              return { ...templateExercise, sets: newSets };
-            }
-            // If no history, return the exercise as is from the template
-            return templateExercise;
-          });
-          exercisesToSet = populatedExercises;
-      }
-      
-      setCurrentWorkout(exercisesToSet);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(exercisesToSet)));
-      setLoadedTemplateName(templateNameToSet);
+                if (allInstances.length > 0) {
+                    // Find the best performance (highest weight, then highest reps)
+                    const bestPerformance = allInstances.reduce((best, current) => {
+                        const currentWeight = current.Weight ?? 0;
+                        const bestWeight = best.Weight ?? 0;
+                        const currentReps = current.Reps ?? 0;
+                        const bestReps = best.Reps ?? 0;
+
+                        if (currentWeight > bestWeight) {
+                            return current;
+                        }
+                        if (currentWeight === bestWeight && currentReps > bestReps) {
+                            return current;
+                        }
+                        return best;
+                    }, allInstances[0]);
+
+                    // Apply the best performance to all sets of this exercise in the template
+                    const newSets = templateExercise.sets.map(templateSet => ({
+                        ...templateSet,
+                        loggedWeight: (bestPerformance.Weight !== undefined && bestPerformance.Weight !== null) ? String(bestPerformance.Weight) : "",
+                        loggedReps: (bestPerformance.Reps !== undefined && bestPerformance.Reps !== null) ? Number(bestPerformance.Reps) : "",
+                    }));
+                    return { ...templateExercise, sets: newSets };
+                }
+                // If no history, return the exercise as is from the template
+                return templateExercise;
+            });
+            exercisesToSet = populatedExercises;
+        }
+
+        setCurrentWorkout(exercisesToSet);
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(exercisesToSet)));
+        setLoadedTemplateName(templateNameToSet);
 
     } catch (error) {
-      console.error("Failed to load template and populate from history:", error);
-      const defaultWorkout = getDefaultExercise();
-      setCurrentWorkout(defaultWorkout);
-      setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
-      setLoadedTemplateName(`Day ${day} (Error Loading)`);
-      toast({ title: "Error Loading Workout", description: (error as Error).message || "Could not load workout.", variant: "destructive" });
+        console.error("Failed to load template and populate from history:", error);
+        const defaultWorkout = getDefaultExercise();
+        setCurrentWorkout(defaultWorkout);
+        setInitialTemplateWorkout(JSON.parse(JSON.stringify(defaultWorkout)));
+        setLoadedTemplateName(`Day ${day} (Error Loading)`);
+        toast({ title: "Error Loading Workout", description: (error as Error).message || "Could not load workout.", variant: "destructive" });
     } finally {
-      setLoadingState('idle');
+        setLoadingState('idle');
     }
-  }, [
-    getDefaultExercise, 
-    toast, 
-  ]);
+}, [
+    getDefaultExercise,
+    toast,
+]);
 
-  // Effect to fetch template when day changes
+
+    // Effect to fetch template when day changes
   useEffect(() => {
-    if (loadingState === 'loading-template' || loadingState === 'saving-state' || loadingState === 'logging' || loadingState === 'syncing') return;
-
+    // Prevent fetching if another major state change is happening
+    if (['loading-template', 'saving-state', 'logging', 'syncing', 'loading-history'].includes(loadingState)) return;
+    
+    // If we just loaded state from localStorage, don't immediately fetch a new template.
+    // Let the user's saved workout remain.
     if (justLoadedStateRef.current) {
-      justLoadedStateRef.current = false; 
+      justLoadedStateRef.current = false;
       return;
     }
-    fetchTemplateForDay(selectedDay);
+
+    // Only fetch if workoutHistory has been populated at least once
+    if (workoutHistory.length > 0 || loadingState === 'idle') {
+        fetchTemplateForDay(selectedDay);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDay]);
+  }, [selectedDay, fetchHistory]); // Depends on selectedDay, and fetchHistory to ensure history is available
   
   const handleResetToTemplate = useCallback(() => {
     if (initialTemplateWorkout.length > 0) {
@@ -243,10 +264,12 @@ export default function FitnessFocusPage() {
       return;
     }
 
+    const workoutToLog = processWorkoutForPersistence(currentWorkout);
+
     if (isOnline) {
       setLoadingState('logging');
       try {
-        const result = await logWorkoutToSupabase(selectedWeek, selectedDay, currentWorkout);
+        const result = await logWorkoutToSupabase(selectedWeek, selectedDay, workoutToLog);
         if (result.success) {
           toast({ title: "Workout Logged!", description: `${result.loggedSetsCount} sets for Week ${selectedWeek}, Day ${selectedDay} saved.` });
           fetchHistory(); 
@@ -261,9 +284,8 @@ export default function FitnessFocusPage() {
       }
     } else {
       // Offline: Add to queue
-      const queuedWorkout: QueuedWorkout = { week: selectedWeek, day: selectedDay, workout: currentWorkout };
-      const currentQueue = getSyncQueue();
-      saveCurrentAppState({ queuedWorkouts: [...currentQueue, queuedWorkout] });
+      const queuedWorkout: QueuedWorkout = { week: selectedWeek, day: selectedDay, workout: workoutToLog };
+      saveCurrentAppState({ queuedWorkouts: [...getSyncQueue(), queuedWorkout] });
       toast({ title: "Workout Saved Offline", description: "Your workout is saved and will be synced when you're back online." });
     }
   };
@@ -292,44 +314,57 @@ export default function FitnessFocusPage() {
   const handleLoadSpecificDay = useCallback(async (week: number, day: number) => {
     setLoadingState('loading-specific-day');
     setSelectedWeek(week);
-    // Setting day will trigger the useEffect
-    setSelectedDay(day);
+    setSelectedDay(day); // This will trigger the useEffect to fetch the template for the new day
   }, []);
 
   const handlePopulateFromHistory = useCallback(() => {
     if (workoutHistory.length === 0) {
-      toast({ title: "No History", description: "No workout history available to populate from." });
-      return;
+        toast({ title: "No History", description: "No workout history available to populate from." });
+        return;
     }
     if (currentWorkout.length === 0) {
-      toast({ title: "No Workout Loaded", description: "Load a template or add exercises first." });
-      return;
+        toast({ title: "No Workout Loaded", description: "Load a template or add exercises first." });
+        return;
     }
 
     setLoadingState('populating-history');
     toast({ title: "Populating from History..." });
 
     const populatedExercises = currentWorkout.map(exercise => {
-      const lastLoggedInstance = workoutHistory.find(
-        hist => hist.Exercise === exercise.name && (hist.Tool || "") === (exercise.tool || "")
-      );
+        // Find the most recent performance for THIS SPECIFIC exercise
+        const allInstances = workoutHistory.filter(
+            hist => hist.Exercise === exercise.name && (hist.Tool || "") === (exercise.tool || "")
+        );
 
-      if (lastLoggedInstance) {
-        const newSets = exercise.sets.map(set => ({
-          ...set,
-          loggedWeight: lastLoggedInstance.Weight !== null ? String(lastLoggedInstance.Weight) : "",
-          loggedReps: lastLoggedInstance.Reps !== null ? String(lastLoggedInstance.Reps) : "",
-        }));
-        return { ...exercise, sets: newSets };
-      }
-      return exercise;
+        if (allInstances.length > 0) {
+            const bestPerformance = allInstances.reduce((best, current) => {
+                const currentWeight = current.Weight ?? 0;
+                const bestWeight = best.Weight ?? 0;
+                const currentReps = current.Reps ?? 0;
+                const bestReps = best.Reps ?? 0;
+
+                if (currentWeight > bestWeight) return current;
+                if (currentWeight === bestWeight && currentReps > bestReps) return current;
+                return best;
+            }, allInstances[0]);
+            
+            const newSets = exercise.sets.map(set => ({
+                ...set,
+                loggedWeight: bestPerformance.Weight !== null ? String(bestPerformance.Weight) : "",
+                loggedReps: bestPerformance.Reps !== null ? String(bestPerformance.Reps) : "",
+            }));
+            return { ...exercise, sets: newSets };
+        }
+        return exercise;
     });
 
     setCurrentWorkout(populatedExercises);
-    justLoadedStateRef.current = true; // Flag that we just populated
+    // We set this ref to true to prevent the main useEffect from re-fetching the template
+    // and overwriting our newly populated data.
+    justLoadedStateRef.current = true;
     setLoadingState('idle');
-    toast({ title: "Workout Populated", description: "Exercises updated with your most recent performance." });
-  }, [currentWorkout, workoutHistory, toast]);
+    toast({ title: "Workout Populated", description: "Exercises updated with your best performance." });
+}, [currentWorkout, workoutHistory, toast]);
 
 
   const isLoading = loadingState !== 'idle';
@@ -383,7 +418,3 @@ export default function FitnessFocusPage() {
     </div>
   );
 }
-
-    
-
-    

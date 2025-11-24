@@ -140,7 +140,7 @@ export default function FitnessFocusPage() {
     fetchHistory();
   }, [fetchHistory]);
 
- const fetchTemplateForDay = useCallback(async (day: number, history: LoggedSetDatabaseEntry[]) => {
+ const fetchTemplateForDay = useCallback(async (day: number, history: LoggedSetDatabaseEntry[], preserveCompletion: boolean = false) => {
     setLoadingState('loading-template');
     toast({ title: "Loading Template...", description: `Fetching structure for Day ${day}.` });
 
@@ -185,7 +185,7 @@ export default function FitnessFocusPage() {
                             setNumber: index + 1,
                             loggedWeight: (histEntry.Weight !== undefined && histEntry.Weight !== null) ? String(histEntry.Weight) : "",
                             loggedReps: (histEntry.Reps !== undefined && histEntry.Reps !== null) ? String(histEntry.Reps) : "",
-                            isCompleted: false, // Reset completion status
+                            isCompleted: preserveCompletion ? (histEntry.Completed ?? false) : false,
                             notes: "", // Reset notes
                         }));
                         return { ...templateExercise, sets: newSets };
@@ -218,7 +218,7 @@ export default function FitnessFocusPage() {
 
     // Effect to fetch template when day changes
   useEffect(() => {
-    if (['saving-state', 'logging', 'syncing'].includes(loadingState)) return;
+    if (['saving-state', 'logging', 'syncing', 'loading-specific-day'].includes(loadingState)) return;
     
     if (justLoadedStateRef.current) {
       justLoadedStateRef.current = false;
@@ -226,7 +226,7 @@ export default function FitnessFocusPage() {
     }
 
     if (workoutHistory.length > 0) {
-        fetchTemplateForDay(selectedDay, workoutHistory);
+        fetchTemplateForDay(selectedDay, workoutHistory, false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDay, workoutHistory]); 
@@ -304,7 +304,12 @@ export default function FitnessFocusPage() {
     setLoadingState('loading-specific-day');
     setSelectedWeek(week);
     setSelectedDay(day);
-  }, []);
+
+    // Load with completion status preserved from history
+    if (workoutHistory.length > 0) {
+      await fetchTemplateForDay(day, workoutHistory, true);
+    }
+  }, [workoutHistory, fetchTemplateForDay]);
 
   const handlePopulateFromHistory = useCallback(() => {
     if (workoutHistory.length === 0) {

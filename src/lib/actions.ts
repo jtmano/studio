@@ -117,7 +117,7 @@ export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
   const { data, error } = await supabase
     .from('Workout History')
     .select('*')
-    .order('id', { ascending: false }); 
+    .order('id', { ascending: false });
 
   if (error) {
     console.error("Error fetching workout history from Supabase:", error);
@@ -127,8 +127,27 @@ export async function getWorkoutHistory(): Promise<LoggedSetDatabaseEntry[]> {
   if (!data) {
     return [];
   }
-  
+
   return data as LoggedSetDatabaseEntry[];
+}
+
+export async function saveCurrentState(appState: Partial<SerializableAppState>): Promise<{ success: boolean; error?: string }> {
+  console.log("Saving current state to Supabase \"Current State\" table");
+
+  const { error } = await supabase
+    .from('Current State')
+    .upsert(
+      { id: 1, state_data: appState, updated_at: new Date().toISOString() },
+      { onConflict: 'id' }
+    );
+
+  if (error) {
+    console.error("Failed to save current state to Supabase:", error);
+    return { success: false, error: `Supabase error: ${error.message}` };
+  }
+
+  console.log("Current state saved to Supabase.");
+  return { success: true };
 }
 
 

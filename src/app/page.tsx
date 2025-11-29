@@ -11,7 +11,7 @@ import { AiExerciseSuggester } from '@/components/fitness/AiExerciseSuggester';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import type { WorkoutExercise, SerializableAppState, LoggedSetDatabaseEntry, QueuedWorkout } from '@/types/fitness';
-import { loadWorkoutTemplate, logWorkout as logWorkoutToSupabase, getWorkoutHistory } from '@/lib/actions';
+import { loadWorkoutTemplate, logWorkout as logWorkoutToSupabase, getWorkoutHistory, saveCurrentState } from '@/lib/actions';
 import { loadCurrentAppState, saveCurrentAppState, getSyncQueue, clearSyncQueue } from '@/lib/local-storage';
 import { processLoadedWorkout, processWorkoutForPersistence } from '@/lib/utils';
 import { Dumbbell, LineChart, Lightbulb } from 'lucide-react';
@@ -289,8 +289,12 @@ export default function FitnessFocusPage() {
       initialTemplateWorkout: processWorkoutForPersistence(initialTemplateWorkout),
     };
     try {
-      saveCurrentAppState(appState);
-      toast({ title: "State Saved", description: "Your current progress has been saved locally." });
+      const result = await saveCurrentState(appState);
+      if (result.success) {
+        toast({ title: "State Saved", description: "Your current progress has been saved to the cloud." });
+      } else {
+        toast({ title: "Save State Failed", description: result.error || "Could not save your current state.", variant: "destructive" });
+      }
     } catch (error) {
       console.error("Failed to save app state:", error);
       toast({ title: "Save State Failed", description: "Could not save your current state.", variant: "destructive" });

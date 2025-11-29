@@ -16,7 +16,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LoadWeekDayDialog } from './LoadWeekDayDialog';
 
 
 type LoadingState = 'idle' | 'loading-template' | 'logging' | 'saving-state' | 'loading-history' | 'syncing' | 'loading-specific-day' | 'populating-history';
@@ -31,7 +30,7 @@ interface WorkoutLoggerProps {
   templateName?: string;
   selectedDay: number;
   isOnline: boolean;
-  onLoadSpecificDay: (week: number, day: number) => Promise<void>;
+  onLoadCurrentState: () => Promise<void>;
   onPopulateFromHistory: () => void;
 }
 
@@ -45,7 +44,7 @@ export function WorkoutLogger({
   templateName,
   selectedDay,
   isOnline,
-  onLoadSpecificDay,
+  onLoadCurrentState,
   onPopulateFromHistory,
 }: WorkoutLoggerProps) {
   const { toast } = useToast();
@@ -214,12 +213,10 @@ export function WorkoutLogger({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <LoadWeekDayDialog onConfirm={onLoadSpecificDay} disabled={isLoading}>
-                   <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                      <Download className="mr-2 h-4 w-4" />
-                      <span>Load Specific Day</span>
-                   </DropdownMenuItem>
-                </LoadWeekDayDialog>
+                <DropdownMenuItem onClick={onLoadCurrentState} disabled={isLoading}>
+                  <Download className="mr-2 h-4 w-4" />
+                  <span>Load Current State</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={onPopulateFromHistory} disabled={isLoading || noWorkoutLoaded}>
                   <History className="mr-2 h-4 w-4" />
                   <span>Populate from History</span>

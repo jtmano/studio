@@ -11,7 +11,7 @@ import { AiExerciseSuggester } from '@/components/fitness/AiExerciseSuggester';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import type { WorkoutExercise, SerializableAppState, LoggedSetDatabaseEntry, QueuedWorkout } from '@/types/fitness';
-import { loadWorkoutTemplate, logWorkout as logWorkoutToSupabase, getWorkoutHistory, saveCurrentState } from '@/lib/actions';
+import { loadWorkoutTemplate, logWorkout as logWorkoutToSupabase, getWorkoutHistory, saveCurrentState, loadCurrentState } from '@/lib/actions';
 import { loadCurrentAppState, saveCurrentAppState, getSyncQueue, clearSyncQueue } from '@/lib/local-storage';
 import { processLoadedWorkout, processWorkoutForPersistence } from '@/lib/utils';
 import { Dumbbell, LineChart, Lightbulb } from 'lucide-react';
@@ -304,16 +304,28 @@ export default function FitnessFocusPage() {
   }, [currentWorkout, initialTemplateWorkout, loadedTemplateName, selectedDay, selectedWeek, toast]);
 
 
-  const handleLoadSpecificDay = useCallback(async (week: number, day: number) => {
+  const handleLoadCurrentState = useCallback(async () => {
     setLoadingState('loading-specific-day');
-    setSelectedWeek(week);
-    setSelectedDay(day);
-
-    // Load with completion status preserved from history
-    if (workoutHistory.length > 0) {
-      await fetchTemplateForDay(day, workoutHistory, true);
+    try {
+      const result = await loadCurrentState();
+      if (result.success && result.data) {
+        const { selectedWeek: week, selectedDay: day, currentWorkout: workout, loadedTemplateName: templateName, initialTemplateWorkout: initialWorkout } = result.data;
+        if (week !== undefined) setSelectedWeek(week);
+        if (day !== undefined) setSelectedDay(day);
+        if (workout) setCurrentWorkout(workout);
+        if (templateName) setLoadedTemplateName(templateName);
+        if (initialWorkout) setInitialTemplateWorkout(initialWorkout);
+        toast({ title: "State Loaded", description: "Your saved progress has been restored from the cloud." });
+      } else {
+        toast({ title: "Load Failed", description: result.error || "No saved state found.", variant: "destructive" });
+      }
+    } catch (error) {
+      console.error("Failed to load current state:", error);
+      toast({ title: "Load Failed", description: "Could not load your saved state.", variant: "destructive" });
+    } finally {
+      setLoadingState('idle');
     }
-  }, [workoutHistory, fetchTemplateForDay]);
+  }, [toast]);
 
   const handlePopulateFromHistory = useCallback(() => {
     if (workoutHistory.length === 0) {
@@ -393,7 +405,7 @@ export default function FitnessFocusPage() {
               templateName={loadedTemplateName}
               selectedDay={selectedDay}
               isOnline={isOnline}
-              onLoadSpecificDay={handleLoadSpecificDay}
+              onLoadCurrentState={handleLoadCurrentState}
               onPopulateFromHistory={handlePopulateFromHistory}
             />
           </TabsContent>

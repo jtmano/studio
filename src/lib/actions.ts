@@ -150,6 +150,28 @@ export async function saveCurrentState(appState: Partial<SerializableAppState>):
   return { success: true };
 }
 
+export async function loadCurrentState(): Promise<{ success: boolean; data?: SerializableAppState; error?: string }> {
+  console.log("Loading current state from Supabase \"Current State\" table");
+
+  const { data, error } = await supabase
+    .from('Current State')
+    .select('state_data')
+    .eq('id', 1)
+    .single();
+
+  if (error) {
+    console.error("Failed to load current state from Supabase:", error);
+    return { success: false, error: `Supabase error: ${error.message}` };
+  }
+
+  if (!data || !data.state_data) {
+    return { success: false, error: "No saved state found." };
+  }
+
+  console.log("Current state loaded from Supabase.");
+  return { success: true, data: data.state_data as SerializableAppState };
+}
+
 
 export async function suggestExercise(input: SuggestExerciseInput): Promise<SuggestExerciseOutput> {
   console.log("Requesting AI exercise suggestion with input:", input);
